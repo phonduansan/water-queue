@@ -42,14 +42,13 @@
             // Auth States
             user: null,
             userRole: 'user', 
-            userWing: '', // เก็บชื่อกองบินของผู้ใช้
+            userWing: '', // เก็บชื่อหน่วยงานของผู้ใช้
             authLoading: true,
             authMode: 'login',
-            authForm: { email: '', password: '', wing: '' }, // เพิ่ม wing ในฟอร์มสมัคร
+            authForm: { email: '', password: '', wing: '' }, 
             authError: '',
 
             // App States (Booking)
-            // Step 1 = เลือกน้ำ, Step 2 = เลือกวันที่ (ตัดเลือกกองบินออกแล้ว)
             currentStep: 1, 
             holidays: {}, 
             holidaysArray: [],
@@ -82,9 +81,8 @@
                 if (snapshot.exists()) {
                     const data = snapshot.val();
                     this.userRole = data.role || 'user';
-                    this.userWing = data.wing || 'ไม่ระบุสังกัด'; // ดึงสังกัดมาเก็บไว้
+                    this.userWing = data.wing || 'ไม่ระบุหน่วยงาน'; 
                 } else {
-                    // กรณี User เก่าที่ยังไม่มี Data (กัน Error)
                     this.userRole = 'user';
                     this.userWing = 'ไม่ระบุ';
                 }
@@ -119,37 +117,38 @@
                 if (!this.authForm.email || !this.authForm.password) {
                     this.authError = 'กรุณากรอกข้อมูลให้ครบถ้วน'; return;
                 }
-                // ถ้าสมัครสมาชิก ต้องเลือกกองบินด้วย
+                
+                // ถ้าสมัครสมาชิก ต้องระบุหน่วยงาน
                 if (this.authMode === 'register' && !this.authForm.wing) {
-                    this.authError = 'กรุณาระบุสังกัด (กองบิน)'; return;
+                    this.authError = 'กรุณาระบุชื่อหน่วยงาน'; return;
                 }
 
                 this.loading = true;
                 try {
                     if (this.authMode === 'register') {
-                        // 1. สร้าง User ใน Auth
+                        // 1. สร้าง User
                         const userCredential = await createUserWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
                         const user = userCredential.user;
                         
-                        // 2. บันทึกข้อมูลเสริม (สังกัด) ลง Database ทันที
+                        // 2. บันทึกข้อมูลหน่วยงาน
                         await set(ref(db, 'users/' + user.uid), {
                             email: this.authForm.email,
-                            wing: this.authForm.wing, // บันทึกกองบิน
+                            wing: this.authForm.wing, // บันทึกชื่อหน่วยงานที่พิมพ์มา
                             role: 'user',
                             createdAt: new Date().toISOString()
                         });
                         
-                        // อัปเดต State ทันทีเพื่อให้หน้าเว็บเปลี่ยน
                         this.userWing = this.authForm.wing;
                         
                     } else {
-                        // Login ปกติ
+                        // Login
                         await signInWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
                     }
                     this.authForm = { email: '', password: '', wing: '' };
                 } catch (error) {
                     const code = error.code;
-                    if (code === 'auth/email-already-in-use') this.authError = 'อีเมลนี้ถูกใช้งานแล้ว';
+                    if (code === 'auth/configuration-not-found') this.authError = 'ระบบยังไม่เปิดใช้งาน Login (แจ้ง Admin เปิด Email/Password)';
+                    else if (code === 'auth/email-already-in-use') this.authError = 'อีเมลนี้ถูกใช้งานแล้ว';
                     else if (code === 'auth/wrong-password' || code === 'auth/user-not-found' || code === 'auth/invalid-credential') this.authError = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
                     else if (code === 'auth/weak-password') this.authError = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
                     else this.authError = 'เกิดข้อผิดพลาด: ' + code;
@@ -173,7 +172,7 @@
                 if(confirm('ลบรายการนี้?')) remove(ref(db, 'holidays/' + dateKey));
             },
 
-            // --- BOOKING LOGIC (ตัด Step เลือกกองบินออก) ---
+            // --- BOOKING LOGIC ---
             selectType(typeName) { this.form.type = typeName; this.nextStep(); },
             nextStep() { if(this.currentStep < 2) this.currentStep++; },
             prevStep() { if(this.currentStep > 1) this.currentStep--; if(this.currentStep===1) this.form.date=''; },
@@ -209,7 +208,7 @@
                 const newBookingRef = push(ref(db, 'bookings'));
                 set(newBookingRef, {
                     ...this.form,
-                    wing: this.userWing, // ใช้กองบินจาก User Profile อัตโนมัติ
+                    wing: this.userWing,
                     userId: this.user.uid,
                     userEmail: this.user.email,
                     timestamp: new Date().toISOString(),
@@ -271,15 +270,10 @@
             </div>
             <div class="w-full bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
                 
-                <!-- เลือกสังกัด (แสดงเฉพาะตอนสมัครใหม่) -->
+                <!-- เลือกหน่วยงาน (พิมพ์เอง) -->
                 <div x-show="authMode === 'register'">
-                    <label class="text-xs font-bold text-slate-500 ml-1">สังกัด (กองบิน)</label>
-                    <select x-model="authForm.wing" class="w-full p-3 rounded-xl border bg-slate-50 mt-1">
-                        <option value="">-- เลือกกองบิน --</option>
-                        <template x-for="i in 17">
-                            <option :value="'กองบิน ' + i" x-text="'กองบิน ' + i"></option>
-                        </template>
-                    </select>
+                    <label class="text-xs font-bold text-slate-500 ml-1">หน่วยงาน</label>
+                    <input type="text" x-model="authForm.wing" placeholder="ระบุชื่อหน่วยงาน (เช่น กองบิน 1, รพ.ภูมิพล)" class="w-full p-3 rounded-xl border bg-slate-50 mt-1">
                 </div>
 
                 <div>
@@ -303,14 +297,14 @@
             </button>
         </div>
 
-        <!-- 2. BOOKING WIZARD (ข้ามขั้นตอนเลือกกองบินแล้ว) -->
+        <!-- 2. BOOKING WIZARD -->
         <template x-if="user && currentTab === 'booking'">
             <div class="h-full flex flex-col">
                 
                 <!-- Header ย่อย -->
                 <div class="text-center mb-6">
                     <h2 class="text-2xl font-bold text-slate-800">ส่งตัวอย่างน้ำ</h2>
-                    <p class="text-slate-500" x-text="'สังกัด: ' + userWing"></p>
+                    <p class="text-slate-500" x-text="'หน่วยงาน: ' + userWing"></p>
                 </div>
 
                 <!-- Step 1: เลือกประเภท -->
