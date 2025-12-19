@@ -13,13 +13,13 @@
         [x-cloak] { display: none !important; }
         .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
         .fade-enter-from, .fade-leave-to { opacity: 0; }
-        .pb-safe { padding-bottom: 5rem; }
+        .pb-safe { padding-bottom: 6rem; } /* เพิ่มพื้นที่ด้านล่าง */
     </style>
 
     <script type="module">
         import Alpine from 'https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/module.esm.js';
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getDatabase, ref, push, set, onValue, remove, update, get, query, orderByChild, equalTo } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+        import { getDatabase, ref, push, set, onValue, remove, update, get } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 
         const firebaseConfig = {
@@ -49,9 +49,11 @@
             authForm: { email: '', password: '', wing: '' }, 
             authError: '',
 
-            holidays: {}, 
+            holidays: {}, // จาก Firebase
+            autoHolidays: {}, // วันหยุดราชการ Auto
             holidaysArray: [],
             userBookings: [], 
+            allBookings: [], // สำหรับ Admin/Dashboard
 
             currentStep: 1, 
             form: { type: '', date: '' },
@@ -60,17 +62,26 @@
             calDate: new Date(), 
             calendarDays: [],
             
+            // Dashboard Variables
+            dashboardDate: new Date(),
+            dashboardDays: [],
+            selectedDashDate: null,
+            selectedDashList: [],
+
             newHoliday: { date: '', name: '' },
 
             init() {
                 console.log("System initializing...");
+                // สร้างวันหยุดราชการรอไว้เลย
+                this.generateThaiHolidays(new Date().getFullYear());
+                this.generateThaiHolidays(new Date().getFullYear() + 1);
+
                 onAuthStateChanged(auth, (user) => {
                     this.user = user;
                     if (user) {
-                        // เปลี่ยนเป็น Realtime Listener ไม่ต้อง await
                         this.listenUserData(user);
                         this.loadHolidays();
-                        this.loadUserBookings();
+                        this.loadBookings();
                     } else {
                         this.resetUserState();
                     }
@@ -79,15 +90,64 @@
                 });
             },
 
-            // เปลี่ยนฟังก์ชันนี้ให้เป็น Realtime (ใช้ onValue แทน get)
+            // --- AUTO HOLIDAYS SYSTEM ---
+            generateThaiHolidays(year) {
+                // วันหยุดคงที่
+                const fixed = {
+                    '01-01': 'วันขึ้นปีใหม่',
+                    '04-06': 'วันจักรี',
+                    '04-13': 'วันสงกรานต์',
+                    '04-14': 'วันสงกรานต์',
+                    '04-15': 'วันสงกรานต์',
+                    '05-04': 'วันฉัตรมงคล',
+                    '06-03': 'วันเฉลิมฯ พระราชินี',
+                    '07-28': 'วันเฉลิมฯ ร.10',
+                    '08-12': 'วันแม่แห่งชาติ',
+                    '10-13': 'วันนวมินทรมหาราช',
+                    '10-23': 'วันปิยมหาราช',
+                    '12-05': 'วันพ่อแห่งชาติ',
+                    '12-10': 'วันรัฐธรรมนูญ',
+                    '12-31': 'วันสิ้นปี'
+                };
+                
+                // วันหยุดตามจันทรคติ (ประมาณการปี 2025-2026)
+                // *ในระบบจริงอาจต้องใช้ Library คำนวณดิถี แต่เพื่อความง่ายจะ Hardcode ปีหลักๆ*
+                const lunar = {
+                    2025: {
+                        '02-12': 'วันมาฆบูชา',
+                        '05-11': 'วันวิสาขบูชา',
+                        '07-10': 'วันอาสาฬหบูชา',
+                        '07-11': 'วันเข้าพรรษา'
+                    },
+                    2026: {
+                        '03-03': 'วันมาฆบูชา',
+                        '05-31': 'วันวิสาขบูชา',
+                        '07-29': 'วันอาสาฬหบูชา',
+                        '07-30': 'วันเข้าพรรษา'
+                    }
+                };
+
+                // Merge Fixed
+                for (const [day, name] of Object.entries(fixed)) {
+                    this.autoHolidays[`${year}-${day}`] = name;
+                }
+                // Merge Lunar
+                if (lunar[year]) {
+                    for (const [day, name] of Object.entries(lunar[year])) {
+                        this.autoHolidays[`${year}-${day}`] = name;
+                    }
+                }
+                
+                // ** วันแรงงาน (05-01) ไม่รวม เพราะเป็นวันหยุดเอกชน ราชการไม่หยุด **
+            },
+
             listenUserData(user) {
                 const userRef = ref(db, 'users/' + user.uid);
                 onValue(userRef, (snapshot) => {
                     if (snapshot.exists()) {
                         const data = snapshot.val();
-                        this.userRole = data.role || 'user';
+                        this.userRole = (data.role || 'user').toLowerCase(); 
                         this.userWing = data.wing || 'ไม่ระบุหน่วยงาน'; 
-                        console.log("User Role updated to:", this.userRole); // ดูใน Console ได้เลยว่าเปลี่ยนไหม
                     } else {
                         this.userRole = 'user';
                         this.userWing = 'ไม่ระบุ';
@@ -107,22 +167,32 @@
                 onValue(holidaysRef, (snapshot) => {
                     const data = snapshot.val() || {};
                     this.holidays = data;
-                    this.holidaysArray = Object.keys(data).map(key => ({
-                        date: key, name: data[key]
-                    })).sort((a, b) => a.date.localeCompare(b.date));
+                    // รวม Manual + Auto Holidays
+                    this.holidaysArray = [
+                        ...Object.keys(data).map(k => ({ date: k, name: data[k], type: 'manual' })),
+                        ...Object.keys(this.autoHolidays).map(k => ({ date: k, name: this.autoHolidays[k], type: 'auto' }))
+                    ].sort((a, b) => a.date.localeCompare(b.date));
+
                     if(this.currentStep === 2) this.generateCalendar();
+                    if(this.currentTab === 'dashboard') this.generateDashboardCalendar();
                 });
             },
 
-            loadUserBookings() {
-                if(!this.user) return;
+            loadBookings() {
                 const bookingsRef = ref(db, 'bookings');
                 onValue(bookingsRef, (snapshot) => {
                     const data = snapshot.val() || {};
-                    this.userBookings = Object.keys(data)
-                        .map(key => ({ id: key, ...data[key] }))
+                    const all = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+                    
+                    // เก็บทั้งหมดไว้ใช้ใน Dashboard
+                    this.allBookings = all;
+
+                    // Filter ของ User ปัจจุบันเพื่อแสดงในหน้า History
+                    this.userBookings = all
                         .filter(item => item.userId === this.user.uid || this.userRole === 'admin' || this.userRole === 'staff')
                         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                    
+                    if(this.currentTab === 'dashboard') this.generateDashboardCalendar();
                 });
             },
 
@@ -142,7 +212,6 @@
                             role: 'user',
                             createdAt: new Date().toISOString()
                         });
-                        // ไม่ต้อง set this.userWing เอง เพราะ listenUserData จะทำงานอัตโนมัติ
                     } else {
                         await signInWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
                     }
@@ -155,6 +224,7 @@
             },
             handleLogout() { signOut(auth); },
 
+            // --- STAFF HOLIDAY ---
             addHoliday() {
                 if(!this.newHoliday.date || !this.newHoliday.name) return;
                 set(ref(db, 'holidays/' + this.newHoliday.date), this.newHoliday.name);
@@ -164,6 +234,48 @@
                 if(confirm('ลบ?')) remove(ref(db, 'holidays/' + dateKey));
             },
 
+            // --- DASHBOARD LOGIC (NEW) ---
+            changeDashMonth(offset) {
+                this.dashboardDate = new Date(this.dashboardDate.getFullYear(), this.dashboardDate.getMonth() + offset, 1);
+                this.generateDashboardCalendar();
+            },
+            generateDashboardCalendar() {
+                const year = this.dashboardDate.getFullYear();
+                const month = this.dashboardDate.getMonth();
+                const firstDay = new Date(year, month, 1).getDay();
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                
+                let days = [];
+                for (let i = 0; i < firstDay; i++) days.push({ blank: true });
+
+                for (let i = 1; i <= daysInMonth; i++) {
+                    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
+                    
+                    // หา Bookings ของวันนี้
+                    const dailyBookings = this.allBookings.filter(b => b.date === dateStr);
+                    const holidayName = this.holidays[dateStr] || this.autoHolidays[dateStr];
+
+                    days.push({
+                        day: i,
+                        fullDate: dateStr,
+                        count: dailyBookings.length,
+                        hasGood: dailyBookings.some(b => b.type === 'good'),
+                        hasWaste: dailyBookings.some(b => b.type === 'waste'),
+                        isHoliday: !!holidayName,
+                        holidayName: holidayName,
+                        selected: this.selectedDashDate === dateStr
+                    });
+                }
+                this.dashboardDays = days;
+            },
+            selectDashDate(dayObj) {
+                if(dayObj.blank) return;
+                this.selectedDashDate = dayObj.fullDate;
+                this.selectedDashList = this.allBookings.filter(b => b.date === dayObj.fullDate);
+                this.generateDashboardCalendar(); // Refresh highlight
+            },
+
+            // --- BOOKING LOGIC ---
             selectType(typeName) { 
                 this.form.type = typeName; 
                 this.generateCalendar(); 
@@ -180,13 +292,11 @@
             generateCalendar() {
                 const year = this.calDate.getFullYear();
                 const month = this.calDate.getMonth();
-                const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+                const firstDay = new Date(year, month, 1).getDay();
                 const daysInMonth = new Date(year, month + 1, 0).getDate();
                 
                 let days = [];
-                for (let i = 0; i < firstDay; i++) {
-                    days.push({ blank: true });
-                }
+                for (let i = 0; i < firstDay; i++) days.push({ blank: true });
 
                 const today = new Date();
                 today.setHours(0,0,0,0);
@@ -198,21 +308,24 @@
                     let status = 'available'; 
                     let reason = '';
 
+                    // เช็ควันหยุด (ทั้ง Manual และ Auto)
+                    const isManualHoliday = this.holidays[dateStr];
+                    const isAutoHoliday = this.autoHolidays[dateStr];
+
                     if (dateObj < today) {
                         status = 'unavailable'; reason = 'ผ่านมาแล้ว';
                     }
-                    else if (this.holidays[dateStr]) {
-                        status = 'unavailable'; reason = this.holidays[dateStr];
+                    else if (isManualHoliday || isAutoHoliday) {
+                        status = 'unavailable'; reason = isManualHoliday || isAutoHoliday;
                     }
                     else if (dateObj.getDay() === 0 || dateObj.getDay() === 6) {
                         status = 'unavailable'; reason = 'วันหยุด ส-อ';
                     }
                     else if (this.form.type === 'good') {
-                        // น้ำดี: จันทร์(1) - พุธ(3)
                         if (dateObj.getDay() > 3) { status = 'unavailable'; reason = 'รับเฉพาะ จ-พ'; }
                     }
                     else if (this.form.type === 'waste') {
-                        // น้ำเสีย: พุธ(3) และ พฤหัส(4) เท่านั้น
+                        // พุธ(3), พฤหัส(4)
                         if (dateObj.getDay() !== 3 && dateObj.getDay() !== 4) { 
                             status = 'unavailable'; reason = 'รับเฉพาะ พุธ-พฤ'; 
                         } else {
@@ -221,14 +334,12 @@
                             next5.setDate(dateObj.getDate() + 5);
                             const next5Str = next5.toISOString().split('T')[0];
                             
-                            // 5 วันจากพุธ = จันทร์ (ปลอดภัย)
-                            // 5 วันจากพฤหัส = อังคาร (ปลอดภัย)
-                            // เช็คเผื่อไว้ (เสาร์-อาทิตย์)
                             if (next5.getDay() === 0 || next5.getDay() === 6) {
                                 status = 'unavailable'; reason = 'วันอ่านผลติด ส-อ';
                             }
-                            if (this.holidays[next5Str]) {
-                                status = 'unavailable'; reason = `วันอ่านผลติดวันหยุด (${this.holidays[next5Str]})`;
+                            // เช็ควันหยุดปลายทาง (Manual + Auto)
+                            if (this.holidays[next5Str] || this.autoHolidays[next5Str]) {
+                                status = 'unavailable'; reason = `วันอ่านผลติดวันหยุด (${this.holidays[next5Str] || this.autoHolidays[next5Str]})`;
                             }
                         }
                     }
@@ -465,13 +576,76 @@
             </div>
         </template>
 
-        <!-- 3. STAFF TAB -->
+        <!-- 3. DASHBOARD TAB (NEW for Admin/Staff) -->
+        <template x-if="user && currentTab === 'dashboard'">
+            <div class="h-full flex flex-col space-y-3">
+                <h2 class="text-xl font-bold text-center text-slate-700">ภาพรวมการจอง (Dashboard)</h2>
+                
+                <!-- Dashboard Calendar -->
+                <div class="bg-white rounded-2xl shadow-sm border p-4">
+                    <div class="flex justify-between items-center mb-4">
+                        <button @click="changeDashMonth(-1)" class="p-2 hover:bg-gray-100 rounded-full"><</button>
+                        <div class="font-bold text-lg text-slate-800" x-text="getMonthName(dashboardDate)"></div>
+                        <button @click="changeDashMonth(1)" class="p-2 hover:bg-gray-100 rounded-full">></button>
+                    </div>
+                    
+                    <div class="grid grid-cols-7 mb-2 text-center text-xs text-gray-500">
+                        <div>อา</div><div>จ</div><div>อ</div><div>พ</div><div>พฤ</div><div>ศ</div><div>ส</div>
+                    </div>
+
+                    <div class="grid grid-cols-7 gap-1">
+                        <template x-for="d in dashboardDays">
+                            <div>
+                                <template x-if="d.blank"><div class="h-10"></div></template>
+                                <template x-if="!d.blank">
+                                    <button @click="selectDashDate(d)" 
+                                        class="w-full h-12 rounded-lg flex flex-col items-center justify-start pt-1 text-xs relative transition-all border"
+                                        :class="d.selected ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-100 hover:bg-slate-50'">
+                                        <span x-text="d.day" :class="d.isHoliday?'text-red-500 font-bold':''"></span>
+                                        
+                                        <!-- Dots Indicator -->
+                                        <div class="flex space-x-0.5 mt-1">
+                                            <template x-if="d.hasGood"><div class="w-1.5 h-1.5 rounded-full bg-blue-400"></div></template>
+                                            <template x-if="d.hasWaste"><div class="w-1.5 h-1.5 rounded-full bg-red-400"></div></template>
+                                        </div>
+                                        <div x-show="d.count > 0" class="text-[8px] text-gray-400 mt-auto mb-1" x-text="d.count"></div>
+                                    </button>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Detail List (Popup style) -->
+                <div x-show="selectedDashDate" class="flex-1 bg-slate-50 rounded-t-2xl p-4 border shadow-inner overflow-y-auto animate-fade-in">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-bold text-slate-800">รายละเอียด: <span x-text="formatDate(selectedDashDate)"></span></h3>
+                        <button @click="selectedDashDate = null" class="text-xs text-gray-500">ปิด</button>
+                    </div>
+
+                    <div class="space-y-2">
+                        <template x-for="item in selectedDashList">
+                            <div class="bg-white p-3 rounded-lg border flex justify-between items-center">
+                                <div>
+                                    <div class="font-bold text-sm text-slate-700" x-text="item.wing"></div>
+                                    <div class="text-xs text-gray-500" x-text="item.type==='good'?'น้ำดี':'น้ำเสีย'"></div>
+                                </div>
+                                <span class="text-[10px] px-2 py-1 rounded bg-slate-100" x-text="item.status"></span>
+                            </div>
+                        </template>
+                        <div x-show="selectedDashList.length === 0" class="text-center text-gray-400 text-sm py-4">ไม่มีรายการจองในวันนี้</div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <!-- 4. STAFF SETTING TAB -->
         <template x-if="user && currentTab === 'staff_panel'">
             <div class="space-y-4">
-                <h2 class="text-xl font-bold text-center text-slate-700">จัดการระบบ (จนท.)</h2>
+                <h2 class="text-xl font-bold text-center text-slate-700">ตั้งค่าวันหยุด</h2>
                 
                 <div class="bg-yellow-50 p-4 rounded-xl border border-yellow-200">
-                    <h3 class="font-bold text-yellow-800 mb-2 text-sm">จัดการวันหยุด / วันออกตรวจ (งดรับ)</h3>
+                    <h3 class="font-bold text-yellow-800 mb-2 text-sm">เพิ่มวันหยุดพิเศษ / วันออกตรวจ</h3>
                     <div class="flex space-x-2">
                         <input type="date" x-model="newHoliday.date" class="p-2 rounded border w-1/3 text-sm">
                         <input type="text" x-model="newHoliday.name" placeholder="สาเหตุ" class="p-2 rounded border flex-1 text-sm">
@@ -480,15 +654,21 @@
                 </div>
 
                 <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    <div class="bg-slate-100 p-2 text-xs font-bold text-slate-600 px-4">รายการวันหยุดในระบบ</div>
+                    <div class="bg-slate-100 p-2 text-xs font-bold text-slate-600 px-4 flex justify-between">
+                        <span>รายการวันหยุด</span>
+                        <span class="text-gray-400 font-normal">*รวมวันหยุดราชการแล้ว</span>
+                    </div>
                     <div class="divide-y max-h-64 overflow-y-auto">
                         <template x-for="h in holidaysArray">
-                            <div class="p-3 flex justify-between items-center text-sm">
+                            <div class="p-3 flex justify-between items-center text-sm hover:bg-slate-50">
                                 <div>
-                                    <div class="font-bold text-slate-800" x-text="formatDate(h.date)"></div>
+                                    <div class="font-bold text-slate-800 flex items-center">
+                                        <span x-text="formatDate(h.date)"></span>
+                                        <span x-show="h.type==='auto'" class="ml-2 text-[8px] bg-gray-200 px-1 rounded text-gray-500">Auto</span>
+                                    </div>
                                     <div class="text-xs text-slate-500" x-text="h.name"></div>
                                 </div>
-                                <button @click="deleteHoliday(h.date)" class="text-red-500">ลบ</button>
+                                <button x-show="h.type === 'manual'" @click="deleteHoliday(h.date)" class="text-red-500 hover:underline">ลบ</button>
                             </div>
                         </template>
                     </div>
@@ -497,41 +677,55 @@
         </template>
     </main>
 
-    <!-- TAB BAR (Centered & Justify Around) -->
-    <nav x-show="user" class="bg-white border-t border-slate-200 fixed bottom-0 w-full max-w-md left-0 right-0 mx-auto pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        <div class="flex justify-around items-center h-16">
-            <button @click="currentTab = 'booking'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+    <!-- TAB BAR -->
+    <nav x-show="user" class="bg-white border-t border-slate-200 fixed bottom-0 w-full max-w-md left-0 right-0 mx-auto pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50 h-16">
+        <div class="flex justify-around items-center h-full">
+            <!-- 1. Booking -->
+            <button @click="currentTab = 'booking'" class="flex flex-col items-center justify-center w-14 space-y-1"
                 :class="currentTab === 'booking' ? 'text-blue-600' : 'text-gray-400'">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                <span class="text-[10px] font-bold">จองคิว</span>
+                <span class="text-[9px] font-bold">จองคิว</span>
             </button>
             
-            <button @click="currentTab = 'history'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+            <!-- 2. History -->
+            <button @click="currentTab = 'history'" class="flex flex-col items-center justify-center w-14 space-y-1"
                 :class="currentTab === 'history' ? 'text-blue-600' : 'text-gray-400'">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                 </svg>
-                <span class="text-[10px] font-bold">ติดตาม</span>
+                <span class="text-[9px] font-bold">ติดตาม</span>
             </button>
 
+            <!-- 3. Dashboard (Admin Only) -->
             <template x-if="userRole === 'admin' || userRole === 'staff'">
-                <button @click="currentTab = 'staff_panel'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
-                    :class="currentTab === 'staff_panel' ? 'text-yellow-600' : 'text-gray-400'">
+                <button @click="currentTab = 'dashboard'" class="flex flex-col items-center justify-center w-14 space-y-1"
+                    :class="currentTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                     </svg>
-                    <span class="text-[10px] font-bold">จนท.</span>
+                    <span class="text-[9px] font-bold">ภาพรวม</span>
                 </button>
             </template>
 
-            <button @click="handleLogout()" class="flex flex-col items-center justify-center w-full h-full space-y-1 text-red-400 hover:text-red-600">
+            <!-- 4. Manage Holiday (Admin Only) -->
+            <template x-if="userRole === 'admin' || userRole === 'staff'">
+                <button @click="currentTab = 'staff_panel'" class="flex flex-col items-center justify-center w-14 space-y-1"
+                    :class="currentTab === 'staff_panel' ? 'text-yellow-600' : 'text-gray-400'">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                    <span class="text-[9px] font-bold">ตั้งค่า</span>
+                </button>
+            </template>
+
+            <!-- Logout -->
+            <button @click="handleLogout()" class="flex flex-col items-center justify-center w-14 space-y-1 text-red-400 hover:text-red-600">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
-                <span class="text-[10px] font-bold">ออก</span>
+                <span class="text-[9px] font-bold">ออก</span>
             </button>
         </div>
     </nav>
