@@ -129,7 +129,21 @@
                     this.authForm = { email: '', password: '' };
                 }).catch((error) => {
                     this.loading = false;
-                    this.authError = 'เกิดข้อผิดพลาด: ' + error.code;
+                    // แปลง Error Code เป็นภาษาไทย
+                    const code = error.code;
+                    if (code === 'auth/configuration-not-found') {
+                        this.authError = 'ระบบยังไม่เปิดใช้งานการเข้าสู่ระบบด้วยอีเมล (กรุณาแจ้ง Admin เปิดใน Firebase)';
+                    } else if (code === 'auth/email-already-in-use') {
+                        this.authError = 'อีเมลนี้ถูกใช้งานแล้ว';
+                    } else if (code === 'auth/wrong-password' || code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+                        this.authError = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+                    } else if (code === 'auth/weak-password') {
+                        this.authError = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
+                    } else if (code === 'auth/network-request-failed') {
+                        this.authError = 'การเชื่อมต่ออินเทอร์เน็ตมีปัญหา';
+                    } else {
+                        this.authError = 'เกิดข้อผิดพลาด: ' + code;
+                    }
                 });
             },
 
