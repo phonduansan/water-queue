@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ระบบจองคิวส่งน้ำ ผสภ.กวป.พอ.</title>
+    <title>ระบบจองคิวส่งน้ำ ทอ.</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Font: Sarabun (ฟอนต์ราชการ/ทันสมัย) -->
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
     
     <style>
@@ -44,12 +45,14 @@
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" x-data="appLogic()">
 
+    <!-- Header -->
     <header class="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-4 pt-8 shadow-lg z-20 rounded-b-[2rem]">
         <div class="flex justify-between items-center max-w-md mx-auto">
             <div>
                 <h1 class="text-xl font-bold">จองคิวส่งน้ำ</h1>
-                <p class="text-xs text-blue-100 opacity-80">แผนกสุขาภิบาล กองเวชศาสตร์ป้องกัน กรมแพทย์ทหารอากาศ</p>
+                <p class="text-xs text-blue-100 opacity-80">กรมช่างโยธา ทหารอากาศ</p>
             </div>
+            <!-- Progress Steps (วงกลมบอกขั้นตอน) -->
             <div class="flex items-center space-x-2">
                 <template x-for="step in 3">
                     <div class="w-2.5 h-2.5 rounded-full transition-all duration-300"
@@ -59,8 +62,10 @@
         </div>
     </header>
 
+    <!-- Main Content Area -->
     <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar">
         
+        <!-- STEP 1: เลือกกองบิน -->
         <div x-show="currentStep === 1" 
              x-transition:enter="transition ease-out duration-300"
              x-transition:enter-start="opacity-0 translate-x-10"
@@ -78,6 +83,7 @@
                             class="w-full text-left p-4 mb-2 rounded-xl transition-all border border-transparent hover:border-blue-500 hover:bg-blue-50 flex items-center justify-between group"
                             :class="form.wing === 'กองบิน ' + i ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-50 text-slate-700'">
                         <span class="font-semibold text-lg" x-text="'กองบิน ' + i"></span>
+                        <!-- Arrow Icon -->
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-50 group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                         </svg>
@@ -86,6 +92,7 @@
             </div>
         </div>
 
+        <!-- STEP 2: เลือกประเภทน้ำ -->
         <div x-show="currentStep === 2" 
              x-transition:enter="transition ease-out duration-300"
              x-transition:enter-start="opacity-0 translate-x-10"
@@ -98,12 +105,14 @@
             </div>
 
             <div class="grid gap-4">
+                <!-- Card: น้ำดี -->
                 <button @click="selectType('good')" class="relative p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col items-center space-y-3 bg-white"
                      :class="form.type === 'good' ? 'border-blue-500 bg-blue-50 ring-4 ring-blue-100' : 'border-slate-100 hover:border-blue-200'">
                     <div class="bg-blue-100 p-4 rounded-full text-blue-600">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2.34" />
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20m-5-5l5-5 5 5" /> </svg>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20m-5-5l5-5 5 5" /> <!-- Mock drop -->
+                        </svg>
                     </div>
                     <div class="text-center">
                         <h3 class="text-xl font-bold text-slate-800">น้ำดี (น้ำประปา)</h3>
@@ -116,6 +125,7 @@
                     </div>
                 </button>
 
+                <!-- Card: น้ำเสีย -->
                 <button @click="selectType('waste')" class="relative p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col items-center space-y-3 bg-white"
                      :class="form.type === 'waste' ? 'border-red-500 bg-red-50 ring-4 ring-red-100' : 'border-slate-100 hover:border-red-200'">
                     <div class="bg-red-100 p-4 rounded-full text-red-600">
@@ -125,7 +135,7 @@
                     </div>
                     <div class="text-center">
                         <h3 class="text-xl font-bold text-slate-800">น้ำเสีย</h3>
-                        <p class="text-sm text-slate-500">ส่งได้ อังคาร - พฤหัสบดี</p>
+                        <p class="text-sm text-slate-500">ส่งได้ อังคาร - พฤหัสบดี (บ่ม 5 วัน)</p>
                     </div>
                     <div x-show="form.type === 'waste'" class="absolute top-4 right-4 text-red-500">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
@@ -136,6 +146,7 @@
             </div>
         </div>
 
+        <!-- STEP 3: เลือกวันที่ & ยืนยัน -->
         <div x-show="currentStep === 3" 
              x-transition:enter="transition ease-out duration-300"
              x-transition:enter-start="opacity-0 translate-x-10"
@@ -147,12 +158,15 @@
                 <p class="text-gray-500" x-text="'สำหรับ ' + form.wing + ' (' + (form.type=='good'?'น้ำดี':'น้ำเสีย') + ')'"></p>
             </div>
 
+            <!-- Date Input styled -->
             <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
                 <label class="block text-sm font-bold text-slate-700 mb-2">แตะเพื่อเลือกวันที่</label>
                 <input type="date" x-model="form.date" @change="checkDate()" 
                        class="w-full text-center text-2xl font-bold p-4 rounded-xl bg-slate-50 border-2 focus:border-blue-500 focus:outline-none text-slate-800">
                 
+                <!-- Feedback Card -->
                 <div x-show="form.date" class="mt-4 transition-all duration-300">
+                    <!-- Error -->
                     <div x-show="errorMsg" class="bg-red-50 border border-red-100 p-4 rounded-xl flex items-start space-x-3">
                         <div class="bg-red-100 p-2 rounded-full text-red-600 shrink-0">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -165,6 +179,7 @@
                         </div>
                     </div>
 
+                    <!-- Success -->
                     <div x-show="!errorMsg && form.date" class="bg-green-50 border border-green-100 p-4 rounded-xl flex items-center space-x-3">
                          <div class="bg-green-100 p-2 rounded-full text-green-600 shrink-0">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -179,6 +194,7 @@
                 </div>
             </div>
 
+            <!-- Submit Button (เฉพาะหน้าสุดท้าย) -->
             <button @click="submit()" 
                     :disabled="!isValid || loading"
                     x-show="!errorMsg && form.date"
@@ -196,6 +212,7 @@
 
     </main>
 
+    <!-- Footer Navigation (Back Button) -->
     <footer class="p-4 bg-white border-t border-slate-100 z-20" x-show="currentStep > 1">
         <button @click="prevStep()" class="text-slate-500 font-semibold flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-slate-50 w-full justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -205,6 +222,7 @@
         </button>
     </footer>
 
+    <!-- Logic Script -->
     <script>
         document.addEventListener('alpine:init', () => {
             Alpine.data('appLogic', () => ({
@@ -242,7 +260,7 @@
                     }
                 },
 
-                // Logic ตรวจสอบวันที่ (เหมือนเดิม)
+                // Logic ตรวจสอบวันที่
                 checkDate() {
                     this.isValid = false;
                     this.errorMsg = '';
@@ -271,9 +289,10 @@
                     }
 
                     // 3. เช็คเงื่อนไข น้ำเสีย (BOD5)
+                    // อัปเดต: อนุญาต อังคาร(2), พุธ(3), พฤหัสบดี(4)
                     if (this.form.type === 'waste') {
-                        if (day !== 2 && day !== 3) {
-                            this.errorMsg = "น้ำเสียส่งได้เฉพาะ อังคาร-พุธ";
+                        if (day < 2 || day > 4) {
+                            this.errorMsg = "น้ำเสียส่งได้เฉพาะ อังคาร - พฤหัสบดี";
                             return;
                         }
                         
