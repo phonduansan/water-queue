@@ -13,7 +13,6 @@
         [x-cloak] { display: none !important; }
         .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
         .fade-enter-from, .fade-leave-to { opacity: 0; }
-        /* ระยะขอบล่างสำหรับเนื้อหาหลัก (เพื่อให้พ้น Tab bar) */
         .pb-safe { padding-bottom: 5rem; }
     </style>
 
@@ -65,10 +64,11 @@
 
             init() {
                 console.log("System initializing...");
-                onAuthStateChanged(auth, async (user) => {
+                onAuthStateChanged(auth, (user) => {
                     this.user = user;
                     if (user) {
-                        await this.fetchUserData(user);
+                        // เปลี่ยนเป็น Realtime Listener ไม่ต้อง await
+                        this.listenUserData(user);
                         this.loadHolidays();
                         this.loadUserBookings();
                     } else {
@@ -79,17 +79,20 @@
                 });
             },
 
-            async fetchUserData(user) {
+            // เปลี่ยนฟังก์ชันนี้ให้เป็น Realtime (ใช้ onValue แทน get)
+            listenUserData(user) {
                 const userRef = ref(db, 'users/' + user.uid);
-                const snapshot = await get(userRef);
-                if (snapshot.exists()) {
-                    const data = snapshot.val();
-                    this.userRole = data.role || 'user';
-                    this.userWing = data.wing || 'ไม่ระบุหน่วยงาน'; 
-                } else {
-                    this.userRole = 'user';
-                    this.userWing = 'ไม่ระบุ';
-                }
+                onValue(userRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        const data = snapshot.val();
+                        this.userRole = data.role || 'user';
+                        this.userWing = data.wing || 'ไม่ระบุหน่วยงาน'; 
+                        console.log("User Role updated to:", this.userRole); // ดูใน Console ได้เลยว่าเปลี่ยนไหม
+                    } else {
+                        this.userRole = 'user';
+                        this.userWing = 'ไม่ระบุ';
+                    }
+                });
             },
 
             resetUserState() {
@@ -139,7 +142,7 @@
                             role: 'user',
                             createdAt: new Date().toISOString()
                         });
-                        this.userWing = this.authForm.wing;
+                        // ไม่ต้อง set this.userWing เอง เพราะ listenUserData จะทำงานอัตโนมัติ
                     } else {
                         await signInWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
                     }
