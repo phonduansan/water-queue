@@ -11,9 +11,9 @@
         body { font-family: 'Sarabun', sans-serif; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         [x-cloak] { display: none !important; }
-        /* Animation สำหรับเปลี่ยน Tab */
         .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
         .fade-enter-from, .fade-leave-to { opacity: 0; }
+        .pb-safe { padding-bottom: 5rem; }
     </style>
 
     <script type="module">
@@ -38,11 +38,9 @@
         const auth = getAuth(app);
 
         Alpine.data('appLogic', () => ({
-            // System
             systemReady: false,
-            currentTab: 'booking', // booking | history | staff_panel
+            currentTab: 'booking',
             
-            // Auth
             user: null,
             userRole: 'user', 
             userWing: '',
@@ -51,21 +49,17 @@
             authForm: { email: '', password: '', wing: '' }, 
             authError: '',
 
-            // App Data
             holidays: {}, 
             holidaysArray: [],
-            userBookings: [], // ประวัติการจองของผู้ใช้
+            userBookings: [], 
 
-            // Booking Wizard
             currentStep: 1, 
             form: { type: '', date: '' },
             loading: false,
 
-            // Calendar Logic
-            calDate: new Date(), // เดือนที่แสดงอยู่
+            calDate: new Date(), 
             calendarDays: [],
             
-            // Staff Panel
             newHoliday: { date: '', name: '' },
 
             init() {
@@ -75,7 +69,7 @@
                     if (user) {
                         await this.fetchUserData(user);
                         this.loadHolidays();
-                        this.loadUserBookings(); // โหลดประวัติ
+                        this.loadUserBookings();
                     } else {
                         this.resetUserState();
                     }
@@ -112,8 +106,6 @@
                     this.holidaysArray = Object.keys(data).map(key => ({
                         date: key, name: data[key]
                     })).sort((a, b) => a.date.localeCompare(b.date));
-                    
-                    // Re-render calendar if open
                     if(this.currentStep === 2) this.generateCalendar();
                 });
             },
@@ -121,18 +113,15 @@
             loadUserBookings() {
                 if(!this.user) return;
                 const bookingsRef = ref(db, 'bookings');
-                // ดึงมาทั้งหมดแล้ว Filter ฝั่ง Client (ง่ายกว่าสำหรับ Structure นี้) 
-                // หรือถ้า data เยอะควรใช้ query orderByChild('userId').equalTo(this.user.uid)
                 onValue(bookingsRef, (snapshot) => {
                     const data = snapshot.val() || {};
                     this.userBookings = Object.keys(data)
                         .map(key => ({ id: key, ...data[key] }))
-                        .filter(item => item.userId === this.user.uid || this.userRole === 'admin' || this.userRole === 'staff') // Admin/Staff เห็นหมด (หรือแก้ให้เห็นเฉพาะของตัวเองก็ได้)
+                        .filter(item => item.userId === this.user.uid || this.userRole === 'admin' || this.userRole === 'staff')
                         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
                 });
             },
 
-            // --- AUTH ---
             toggleAuthMode() { this.authMode = this.authMode === 'login' ? 'register' : 'login'; this.authError = ''; },
             async handleAuth() {
                 this.authError = '';
@@ -162,7 +151,6 @@
             },
             handleLogout() { signOut(auth); },
 
-            // --- STAFF ---
             addHoliday() {
                 if(!this.newHoliday.date || !this.newHoliday.name) return;
                 set(ref(db, 'holidays/' + this.newHoliday.date), this.newHoliday.name);
@@ -172,16 +160,14 @@
                 if(confirm('ลบ?')) remove(ref(db, 'holidays/' + dateKey));
             },
 
-            // --- BOOKING & CALENDAR LOGIC ---
             selectType(typeName) { 
                 this.form.type = typeName; 
-                this.generateCalendar(); // สร้างปฏิทินทันทีเมื่อเลือกประเภท
+                this.generateCalendar(); 
                 this.nextStep(); 
             },
             nextStep() { if(this.currentStep < 2) this.currentStep++; },
             prevStep() { if(this.currentStep > 1) this.currentStep--; },
 
-            // Calendar Generation
             changeMonth(offset) {
                 this.calDate = new Date(this.calDate.getFullYear(), this.calDate.getMonth() + offset, 1);
                 this.generateCalendar();
@@ -194,7 +180,6 @@
                 const daysInMonth = new Date(year, month + 1, 0).getDate();
                 
                 let days = [];
-                // Empty slots for prev month
                 for (let i = 0; i < firstDay; i++) {
                     days.push({ blank: true });
                 }
@@ -204,42 +189,42 @@
 
                 for (let i = 1; i <= daysInMonth; i++) {
                     const dateObj = new Date(year, month, i);
-                    const dateStr = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+                    const dateStr = dateObj.toISOString().split('T')[0];
                     
-                    // Logic การตรวจสอบ (เหมือน checkDate เดิม)
-                    let status = 'available'; // available, unavailable, selected
+                    let status = 'available'; 
                     let reason = '';
 
-                    // 1. Past Date
                     if (dateObj < today) {
                         status = 'unavailable'; reason = 'ผ่านมาแล้ว';
                     }
-                    // 2. Holiday
                     else if (this.holidays[dateStr]) {
                         status = 'unavailable'; reason = this.holidays[dateStr];
                     }
-                    // 3. Weekend
                     else if (dateObj.getDay() === 0 || dateObj.getDay() === 6) {
-                        status = 'unavailable'; reason = 'วันหยุดเสาร์-อาทิตย์';
+                        status = 'unavailable'; reason = 'วันหยุด ส-อ';
                     }
                     else if (this.form.type === 'good') {
-                        // Mon(1) - Wed(3)
+                        // น้ำดี: จันทร์(1) - พุธ(3)
                         if (dateObj.getDay() > 3) { status = 'unavailable'; reason = 'รับเฉพาะ จ-พ'; }
                     }
                     else if (this.form.type === 'waste') {
-                        // Tue(2) - Thu(4)
-                        if (dateObj.getDay() < 2 || dateObj.getDay() > 4) { 
-                            status = 'unavailable'; reason = 'รับเฉพาะ อ-พฤ'; 
+                        // น้ำเสีย: พุธ(3) และ พฤหัส(4) เท่านั้น
+                        if (dateObj.getDay() !== 3 && dateObj.getDay() !== 4) { 
+                            status = 'unavailable'; reason = 'รับเฉพาะ พุธ-พฤ'; 
                         } else {
                             // BOD5 Check
                             const next5 = new Date(dateObj);
                             next5.setDate(dateObj.getDate() + 5);
                             const next5Str = next5.toISOString().split('T')[0];
+                            
+                            // 5 วันจากพุธ = จันทร์ (ปลอดภัย)
+                            // 5 วันจากพฤหัส = อังคาร (ปลอดภัย)
+                            // เช็คเผื่อไว้ (เสาร์-อาทิตย์)
                             if (next5.getDay() === 0 || next5.getDay() === 6) {
-                                status = 'unavailable'; reason = 'วันอ่านผล(5วัน) ตรงเสาร์อาทิตย์';
+                                status = 'unavailable'; reason = 'วันอ่านผลติด ส-อ';
                             }
                             if (this.holidays[next5Str]) {
-                                status = 'unavailable'; reason = `วันอ่านผลตรงวันหยุด (${this.holidays[next5Str]})`;
+                                status = 'unavailable'; reason = `วันอ่านผลติดวันหยุด (${this.holidays[next5Str]})`;
                             }
                         }
                     }
@@ -258,7 +243,7 @@
             selectDate(dayObj) {
                 if (dayObj.status === 'unavailable' || dayObj.blank) return;
                 this.form.date = dayObj.fullDate;
-                this.generateCalendar(); // Re-render to show selection
+                this.generateCalendar();
             },
 
             submit() {
@@ -271,17 +256,16 @@
                     userId: this.user.uid,
                     userEmail: this.user.email,
                     timestamp: new Date().toISOString(),
-                    status: 'รอตรวจสอบ' // Pending
+                    status: 'รอตรวจสอบ'
                 }).then(() => {
                     alert('🎉 จองคิวสำเร็จ! ดูสถานะได้ที่เมนู "ติดตามผล"');
                     this.currentStep = 1; 
                     this.form = { type: '', date: '' };
-                    this.currentTab = 'history'; // เด้งไปหน้าผล
+                    this.currentTab = 'history';
                     this.loading = false;
                 });
             },
 
-            // Formats
             formatDate(dateStr) {
                 if(!dateStr) return '-';
                 const d = new Date(dateStr);
@@ -303,12 +287,10 @@
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" x-data="appLogic()" x-cloak>
 
-    <!-- Loading -->
     <div x-show="!systemReady" class="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700"></div>
     </div>
 
-    <!-- Header -->
     <header class="bg-gradient-to-r from-blue-800 to-indigo-900 text-white p-4 pt-8 shadow-lg z-20 rounded-b-[2rem] shrink-0">
         <div class="flex justify-between items-start max-w-md mx-auto">
             <div>
@@ -328,8 +310,7 @@
         </div>
     </header>
 
-    <!-- Main Content -->
-    <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar pb-24">
+    <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar pb-safe">
         
         <!-- LOGIN -->
         <div x-show="!user && systemReady" class="flex flex-col items-center justify-center h-full space-y-6">
@@ -362,7 +343,6 @@
         <!-- 1. BOOKING TAB -->
         <template x-if="user && currentTab === 'booking'">
             <div class="h-full flex flex-col">
-                <!-- Step 1: เลือกประเภท -->
                 <div x-show="currentStep === 1" class="space-y-4 animate-fade-in">
                     <h2 class="text-xl font-bold text-center text-slate-700 mb-2">เริ่มการจองคิว</h2>
                     
@@ -377,29 +357,25 @@
                     <button @click="selectType('waste')" class="w-full p-6 rounded-2xl border-2 hover:border-red-500 bg-white shadow-sm flex items-center justify-between transition-all hover:bg-red-50">
                         <div class="text-left">
                             <div class="text-lg font-bold text-red-700">น้ำเสีย</div>
-                            <div class="text-xs text-gray-500">อังคาร - พฤหัส (บ่ม 5 วัน)</div>
+                            <div class="text-xs text-gray-500">พุธ - พฤหัส (บ่ม 5 วัน)</div>
                         </div>
                         <div class="text-3xl">🧪</div>
                     </button>
                 </div>
 
-                <!-- Step 2: เลือกวันที่ (ปฏิทิน) -->
                 <div x-show="currentStep === 2" class="space-y-4 animate-fade-in">
                     <div class="flex items-center justify-between">
                         <button @click="prevStep()" class="text-sm text-gray-500 flex items-center"><svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg> ย้อนกลับ</button>
                         <h3 class="font-bold text-slate-700" x-text="form.type==='good'?'จองคิวน้ำดี':'จองคิวน้ำเสีย'"></h3>
                     </div>
 
-                    <!-- Calendar Component -->
                     <div class="bg-white rounded-2xl shadow-sm border p-4">
-                        <!-- Cal Header -->
                         <div class="flex justify-between items-center mb-4">
                             <button @click="changeMonth(-1)" class="p-2 hover:bg-gray-100 rounded-full text-gray-600"><</button>
                             <div class="font-bold text-lg text-slate-800" x-text="getMonthName(calDate)"></div>
                             <button @click="changeMonth(1)" class="p-2 hover:bg-gray-100 rounded-full text-gray-600">></button>
                         </div>
                         
-                        <!-- Weekdays -->
                         <div class="grid grid-cols-7 mb-2 text-center">
                             <div class="text-xs text-red-500 font-bold">อา</div>
                             <div class="text-xs text-gray-500">จ</div>
@@ -410,7 +386,6 @@
                             <div class="text-xs text-red-500 font-bold">ส</div>
                         </div>
 
-                        <!-- Days -->
                         <div class="grid grid-cols-7 gap-1">
                             <template x-for="d in calendarDays">
                                 <div>
@@ -426,7 +401,6 @@
                                                 'bg-blue-600 text-white shadow-md transform scale-105 z-10': d.selected
                                             }">
                                             <span x-text="d.day" class="text-sm"></span>
-                                            <!-- Status Dot/Text -->
                                             <span x-show="d.status==='unavailable'" class="text-[8px] leading-tight px-1 truncate w-full" x-text="d.reason"></span>
                                             <span x-show="d.status==='available' && !d.selected" class="text-[8px] text-green-600">ว่าง</span>
                                             <span x-show="d.selected" class="text-[8px] text-white">เลือก</span>
@@ -437,7 +411,6 @@
                         </div>
                     </div>
 
-                    <!-- Confirm Area -->
                     <div x-show="form.date" class="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center">
                         <div class="text-sm text-blue-800 mb-1">วันที่เลือก</div>
                         <div class="text-xl font-bold text-blue-900" x-text="formatDate(form.date)"></div>
@@ -472,7 +445,6 @@
                                 <span>•</span>
                                 <span x-text="book.wing"></span>
                             </div>
-                            <!-- ส่วนแสดงผลการตรวจ (ถ้ามี) -->
                             <template x-if="book.resultLink">
                                 <a :href="book.resultLink" target="_blank" class="mt-3 block text-center w-full py-2 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100">
                                     📄 ดาวน์โหลดรายงานผล
@@ -489,13 +461,13 @@
             </div>
         </template>
 
-        <!-- 3. STAFF TAB (Visible to all for demo, usually restricts) -->
+        <!-- 3. STAFF TAB -->
         <template x-if="user && currentTab === 'staff_panel'">
             <div class="space-y-4">
                 <h2 class="text-xl font-bold text-center text-slate-700">จัดการระบบ (จนท.)</h2>
                 
                 <div class="bg-yellow-50 p-4 rounded-xl border border-yellow-200">
-                    <h3 class="font-bold text-yellow-800 mb-2 text-sm">ปิดรับจอง (วันหยุด/ออกตรวจ)</h3>
+                    <h3 class="font-bold text-yellow-800 mb-2 text-sm">จัดการวันหยุด / วันออกตรวจ (งดรับ)</h3>
                     <div class="flex space-x-2">
                         <input type="date" x-model="newHoliday.date" class="p-2 rounded border w-1/3 text-sm">
                         <input type="text" x-model="newHoliday.name" placeholder="สาเหตุ" class="p-2 rounded border flex-1 text-sm">
@@ -504,7 +476,7 @@
                 </div>
 
                 <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    <div class="bg-slate-100 p-2 text-xs font-bold text-slate-600 px-4">วันหยุดในระบบ</div>
+                    <div class="bg-slate-100 p-2 text-xs font-bold text-slate-600 px-4">รายการวันหยุดในระบบ</div>
                     <div class="divide-y max-h-64 overflow-y-auto">
                         <template x-for="h in holidaysArray">
                             <div class="p-3 flex justify-between items-center text-sm">
@@ -521,10 +493,10 @@
         </template>
     </main>
 
-    <!-- TAB BAR NAVIGATION (Bottom) -->
+    <!-- TAB BAR -->
     <nav x-show="user" class="bg-white border-t border-slate-200 fixed bottom-0 w-full max-w-md pb-safe">
-        <div class="flex justify-around items-center h-16">
-            <button @click="currentTab = 'booking'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+        <div class="flex justify-center items-center h-16 gap-12">
+            <button @click="currentTab = 'booking'" class="flex flex-col items-center justify-center w-12 space-y-1 transition-colors"
                 :class="currentTab === 'booking' ? 'text-blue-600' : 'text-gray-400'">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -532,16 +504,16 @@
                 <span class="text-[10px] font-bold">จองคิว</span>
             </button>
             
-            <button @click="currentTab = 'history'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+            <button @click="currentTab = 'history'" class="flex flex-col items-center justify-center w-12 space-y-1 transition-colors"
                 :class="currentTab === 'history' ? 'text-blue-600' : 'text-gray-400'">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                 </svg>
-                <span class="text-[10px] font-bold">ติดตามผล</span>
+                <span class="text-[10px] font-bold">ติดตาม</span>
             </button>
 
             <template x-if="userRole === 'admin' || userRole === 'staff'">
-                <button @click="currentTab = 'staff_panel'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+                <button @click="currentTab = 'staff_panel'" class="flex flex-col items-center justify-center w-12 space-y-1 transition-colors"
                     :class="currentTab === 'staff_panel' ? 'text-yellow-600' : 'text-gray-400'">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -551,7 +523,7 @@
                 </button>
             </template>
 
-            <button @click="handleLogout()" class="flex flex-col items-center justify-center w-full h-full space-y-1 text-red-400 hover:text-red-600">
+            <button @click="handleLogout()" class="flex flex-col items-center justify-center w-12 space-y-1 text-red-400 hover:text-red-600">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
