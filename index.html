@@ -2,25 +2,34 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ระบบจองคิวส่งน้ำ ทอ.</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Sarabun', sans-serif; }
+        /* ซ่อน Scrollbar ตอนเปลี่ยนหน้า */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
         import { getDatabase, ref, push, set, onValue } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
 
-        // --- 1. เอาค่าจาก Firebase มาใส่ตรงนี้ ---
+        // --- Config ของคุณ (ใส่ให้เรียบร้อยแล้ว) ---
         const firebaseConfig = {
-            apiKey: "AIzaSyAXLLitg-7QyX7cA_WNU2iMdSvSsdbBHHk", 
+            apiKey: "AIzaSyAXLLitg-7QyX7cA_WNU2iMdSvSsdbBHHk",
             authDomain: "water-queue-system.firebaseapp.com",
             databaseURL: "https://water-queue-system-default-rtdb.asia-southeast1.firebasedatabase.app",
             projectId: "water-queue-system",
             storageBucket: "water-queue-system.firebasestorage.app",
             messagingSenderId: "263603663598",
-            appId: "1:263603663598:web:b7cad1f4d116425cf779ff"
+            appId: "1:263603663598:web:b7cad1f4d116425cf779ff",
+            measurementId: "G-LLS33EN3PP"
         };
-        // -------------------------------------
+        // ---------------------------------------------------
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
@@ -33,101 +42,214 @@
         window.dbOnValue = onValue;
     </script>
 </head>
-<body class="bg-gray-100 min-h-screen" x-data="appLogic()">
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" x-data="appLogic()">
 
-    <div class="max-w-md mx-auto bg-white min-h-screen shadow-lg flex flex-col">
-        <div class="bg-blue-800 p-5 text-white rounded-b-3xl shadow-md z-10">
-            <h1 class="text-2xl font-bold">จองคิวส่งน้ำ</h1>
-            <p class="text-sm opacity-80">ระบบตรวจสอบคุณภาพน้ำ (สิ่งแวดล้อม)</p>
+    <header class="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-4 pt-8 shadow-lg z-20 rounded-b-[2rem]">
+        <div class="flex justify-between items-center max-w-md mx-auto">
+            <div>
+                <h1 class="text-xl font-bold">จองคิวส่งน้ำ</h1>
+                <p class="text-xs text-blue-100 opacity-80">กรมช่างโยธา ทหารอากาศ</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <template x-for="step in 3">
+                    <div class="w-2.5 h-2.5 rounded-full transition-all duration-300"
+                         :class="currentStep >= step ? 'bg-white scale-125' : 'bg-blue-400 opacity-50'"></div>
+                </template>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar">
+        
+        <div x-show="currentStep === 1" 
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-x-10"
+             x-transition:enter-end="opacity-100 translate-x-0"
+             class="space-y-4">
+            
+            <div class="text-center py-4">
+                <h2 class="text-2xl font-bold text-slate-800">เลือกหน่วยงาน</h2>
+                <p class="text-gray-500">กรุณาระบุสังกัดของท่าน</p>
+            </div>
+
+            <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-100 h-96 overflow-y-auto">
+                <template x-for="i in 17">
+                    <button @click="selectWing('กองบิน ' + i)"
+                            class="w-full text-left p-4 mb-2 rounded-xl transition-all border border-transparent hover:border-blue-500 hover:bg-blue-50 flex items-center justify-between group"
+                            :class="form.wing === 'กองบิน ' + i ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-50 text-slate-700'">
+                        <span class="font-semibold text-lg" x-text="'กองบิน ' + i"></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-50 group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                        </svg>
+                    </button>
+                </template>
+            </div>
         </div>
 
-        <div class="flex-1 p-6 space-y-6">
+        <div x-show="currentStep === 2" 
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-x-10"
+             x-transition:enter-end="opacity-100 translate-x-0"
+             class="space-y-6 pt-4">
             
-            <div>
-                <label class="font-bold text-gray-700">หน่วยงาน</label>
-                <select x-model="form.wing" class="w-full mt-2 p-3 border rounded-xl bg-gray-50">
-                    <option value="">-- กรุณาเลือก --</option>
-                    <template x-for="i in 17">
-                        <option :value="'กองบิน ' + i" x-text="'กองบิน ' + i"></option>
-                    </template>
-                </select>
+            <div class="text-center">
+                <h2 class="text-2xl font-bold text-slate-800">ประเภทตัวอย่างน้ำ</h2>
+                <p class="text-gray-500">เลือกประเภทน้ำที่ต้องการส่งตรวจ</p>
             </div>
 
-            <div>
-                <label class="font-bold text-gray-700">ประเภทน้ำ</label>
-                <div class="grid grid-cols-2 gap-4 mt-2">
-                    <div @click="setWaterType('good')" 
-                         class="p-4 rounded-xl border-2 text-center cursor-pointer transition-all"
-                         :class="form.type === 'good' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200'">
-                        <div class="font-bold">น้ำดี</div>
-                        <div class="text-xs text-gray-500">จันทร์ - พุธ</div>
+            <div class="grid gap-4">
+                <button @click="selectType('good')" class="relative p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col items-center space-y-3 bg-white"
+                     :class="form.type === 'good' ? 'border-blue-500 bg-blue-50 ring-4 ring-blue-100' : 'border-slate-100 hover:border-blue-200'">
+                    <div class="bg-blue-100 p-4 rounded-full text-blue-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2.34" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20m-5-5l5-5 5 5" /> </svg>
                     </div>
-                    <div @click="setWaterType('waste')"
-                         class="p-4 rounded-xl border-2 text-center cursor-pointer transition-all"
-                         :class="form.type === 'waste' ? 'border-red-500 bg-red-50 text-red-700' : 'border-gray-200'">
-                        <div class="font-bold">น้ำเสีย</div>
-                        <div class="text-xs text-red-500">อังคาร - พุธ</div>
+                    <div class="text-center">
+                        <h3 class="text-xl font-bold text-slate-800">น้ำดี (น้ำประปา)</h3>
+                        <p class="text-sm text-slate-500">ส่งได้ จันทร์ - พุธ</p>
                     </div>
-                </div>
-                <div x-show="form.type === 'waste'" class="mt-2 text-xs text-red-500 bg-red-50 p-2 rounded">
-                    *น้ำเสียต้องบ่ม 5 วัน (BOD5) ระบบจะคำนวณวันหยุดปลายทางให้
-                </div>
+                    <div x-show="form.type === 'good'" class="absolute top-4 right-4 text-blue-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                </button>
+
+                <button @click="selectType('waste')" class="relative p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col items-center space-y-3 bg-white"
+                     :class="form.type === 'waste' ? 'border-red-500 bg-red-50 ring-4 ring-red-100' : 'border-slate-100 hover:border-red-200'">
+                    <div class="bg-red-100 p-4 rounded-full text-red-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                    </div>
+                    <div class="text-center">
+                        <h3 class="text-xl font-bold text-slate-800">น้ำเสีย</h3>
+                        <p class="text-sm text-slate-500">ส่งได้ อังคาร - พุธ (บ่ม 5 วัน)</p>
+                    </div>
+                    <div x-show="form.type === 'waste'" class="absolute top-4 right-4 text-red-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                </button>
+            </div>
+        </div>
+
+        <div x-show="currentStep === 3" 
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-x-10"
+             x-transition:enter-end="opacity-100 translate-x-0"
+             class="space-y-6 pt-4">
+            
+            <div class="text-center">
+                <h2 class="text-2xl font-bold text-slate-800">เลือกวันส่งตัวอย่าง</h2>
+                <p class="text-gray-500" x-text="'สำหรับ ' + form.wing + ' (' + (form.type=='good'?'น้ำดี':'น้ำเสีย') + ')'"></p>
             </div>
 
-            <div>
-                <label class="font-bold text-gray-700">วันที่ต้องการส่ง</label>
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+                <label class="block text-sm font-bold text-slate-700 mb-2">แตะเพื่อเลือกวันที่</label>
                 <input type="date" x-model="form.date" @change="checkDate()" 
-                       class="w-full mt-2 p-3 border rounded-xl text-lg font-mono">
+                       class="w-full text-center text-2xl font-bold p-4 rounded-xl bg-slate-50 border-2 focus:border-blue-500 focus:outline-none text-slate-800">
                 
-                <div x-show="form.date" class="mt-3">
-                    <div x-show="errorMsg" class="flex items-center text-red-600 bg-red-50 p-3 rounded-lg">
-                        <span class="mr-2">❌</span> <span x-text="errorMsg"></span>
+                <div x-show="form.date" class="mt-4 transition-all duration-300">
+                    <div x-show="errorMsg" class="bg-red-50 border border-red-100 p-4 rounded-xl flex items-start space-x-3">
+                        <div class="bg-red-100 p-2 rounded-full text-red-600 shrink-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-red-700">จองไม่ได้</h4>
+                            <p class="text-sm text-red-600 mt-1" x-text="errorMsg"></p>
+                        </div>
                     </div>
-                    <div x-show="!errorMsg && form.date" class="flex items-center text-green-700 bg-green-50 p-3 rounded-lg">
-                        <span class="mr-2">✅</span> <span>วันที่นี้จองได้</span>
+
+                    <div x-show="!errorMsg && form.date" class="bg-green-50 border border-green-100 p-4 rounded-xl flex items-center space-x-3">
+                         <div class="bg-green-100 p-2 rounded-full text-green-600 shrink-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-green-700">วันว่าง! สามารถจองได้</h4>
+                            <p class="text-xs text-green-600 mt-1" x-show="form.type==='waste'">*คำนวณวันบ่ม BOD5 เรียบร้อยแล้ว</p>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <button @click="submit()" 
                     :disabled="!isValid || loading"
-                    class="w-full py-4 rounded-xl text-white font-bold text-lg shadow-lg transition-transform active:scale-95"
-                    :class="isValid ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'">
-                <span x-show="!loading">ยืนยันการจองคิว</span>
-                <span x-show="loading">กำลังบันทึก...</span>
+                    x-show="!errorMsg && form.date"
+                    class="w-full py-4 rounded-2xl text-white font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95"
+                    :class="loading ? 'bg-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:shadow-xl'">
+                <span x-show="!loading" class="flex items-center justify-center space-x-2">
+                    <span>ยืนยันการจองคิว</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </span>
+                <span x-show="loading">กำลังบันทึกข้อมูล...</span>
             </button>
         </div>
-    </div>
+
+    </main>
+
+    <footer class="p-4 bg-white border-t border-slate-100 z-20" x-show="currentStep > 1">
+        <button @click="prevStep()" class="text-slate-500 font-semibold flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-slate-50 w-full justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+            </svg>
+            <span>ย้อนกลับ</span>
+        </button>
+    </footer>
 
     <script>
         document.addEventListener('alpine:init', () => {
             Alpine.data('appLogic', () => ({
+                currentStep: 1,
                 holidays: {}, 
-                form: { wing: '', type: 'good', date: '' },
+                form: { wing: '', type: '', date: '' },
                 errorMsg: '',
                 isValid: false,
                 loading: false,
 
                 init() {
-                    // ดึงข้อมูลวันหยุดจาก Firebase (Node: holidays)
                     const holidaysRef = window.dbRef(window.db, 'holidays');
                     window.dbOnValue(holidaysRef, (snapshot) => {
                         this.holidays = snapshot.val() || {};
                     });
                 },
 
-                setWaterType(type) {
-                    this.form.type = type;
-                    this.checkDate(); // เช็คใหม่ทันทีที่เปลี่ยนประเภท
+                // Functions ควบคุม Step
+                selectWing(wingName) {
+                    this.form.wing = wingName;
+                    this.nextStep();
+                },
+                selectType(typeName) {
+                    this.form.type = typeName;
+                    this.nextStep();
+                },
+                nextStep() {
+                    if(this.currentStep < 3) this.currentStep++;
+                },
+                prevStep() {
+                    if(this.currentStep > 1) {
+                        this.currentStep--;
+                        // Reset ค่าบางอย่างถ้าย้อนกลับ
+                        if(this.currentStep === 2) this.form.date = '';
+                    }
                 },
 
+                // Logic ตรวจสอบวันที่ (เหมือนเดิม)
                 checkDate() {
                     this.isValid = false;
                     this.errorMsg = '';
                     if (!this.form.date) return;
 
                     const dateObj = new Date(this.form.date);
-                    const day = dateObj.getDay(); // 0=Sun, 1=Mon, 2=Tue...
+                    const day = dateObj.getDay(); 
                     const dateStr = this.form.date;
 
                     // 1. เช็ควันหยุดราชการ/วันออกตรวจ (ต้นทาง)
@@ -142,7 +264,7 @@
 
                     // 2. เช็คเงื่อนไข น้ำดี
                     if (this.form.type === 'good') {
-                        if (day > 3) { // มากกว่าพุธ (พฤ, ศ)
+                        if (day > 3) { 
                             this.errorMsg = "น้ำดีส่งได้เฉพาะ จันทร์-พุธ";
                             return;
                         }
@@ -150,7 +272,7 @@
 
                     // 3. เช็คเงื่อนไข น้ำเสีย (BOD5)
                     if (this.form.type === 'waste') {
-                        if (day !== 2 && day !== 3) { // ไม่ใช่อังคาร/พุธ
+                        if (day !== 2 && day !== 3) {
                             this.errorMsg = "น้ำเสียส่งได้เฉพาะ อังคาร-พุธ";
                             return;
                         }
@@ -162,11 +284,11 @@
                         const next5Str = next5.toISOString().split('T')[0];
 
                         if (day5 === 0 || day5 === 6) {
-                            this.errorMsg = "วันครบกำหนดอ่านค่า (5 วัน) ตรงกับ เสาร์-อาทิตย์";
+                            this.errorMsg = "BOD5 ตรงกับ เสาร์-อาทิตย์";
                             return;
                         }
                         if (this.holidays[next5Str]) {
-                            this.errorMsg = `วันครบกำหนดอ่านค่า ตรงกับวันหยุด (${this.holidays[next5Str]})`;
+                            this.errorMsg = `BOD5 ตรงกับวันหยุด (${this.holidays[next5Str]})`;
                             return;
                         }
                     }
@@ -175,21 +297,20 @@
                 },
 
                 submit() {
-                    if (!this.form.wing) return alert('กรุณาเลือกกองบิน');
+                    if (!this.isValid) return;
                     this.loading = true;
 
-                    // บันทึกลง Firebase (Node: bookings)
                     const newBookingRef = window.dbPush(window.dbRef(window.db, 'bookings'));
                     window.dbSet(newBookingRef, {
                         ...this.form,
-                        timestamp: new Date().toISOString()
+                        timestamp: new Date().toISOString(),
+                        status: 'pending'
                     }).then(() => {
-                        alert('✅ จองคิวสำเร็จ!');
-                        this.form.date = '';
-                        this.checkDate();
-                        this.loading = false;
+                        // Success Alert (เปลี่ยนเป็น Alert สวยๆ ของ Browser)
+                        alert('🎉 จองคิวสำเร็จ! \nเจ้าหน้าที่ได้รับข้อมูลเรียบร้อยแล้ว');
+                        window.location.reload(); // รีโหลดหน้าใหม่
                     }).catch((e) => {
-                        alert('เกิดข้อผิดพลาด: ' + e.message);
+                        alert('Error: ' + e.message);
                         this.loading = false;
                     });
                 }
