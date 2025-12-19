@@ -13,14 +13,10 @@
         [x-cloak] { display: none !important; }
     </style>
 
-    <!-- Script แบบ Module: โหลด Alpine และ Firebase พร้อมกันเพื่อแก้ปัญหาลำดับการทำงาน -->
     <script type="module">
-        // 1. Import Alpine จาก Module โดยตรง (เพื่อให้เราสั่ง start เองได้)
         import Alpine from 'https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/module.esm.js';
-        
-        // 2. Import Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getDatabase, ref, push, set, onValue } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+        import { getDatabase, ref, push, set, onValue, remove, update, get } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 
         // --- Config ---
@@ -35,46 +31,78 @@
             measurementId: "G-LLS33EN3PP"
         };
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         const auth = getAuth(app);
 
-        // 3. สร้าง Component Logic (เหมือนเดิม แต่ย้ายมาประกาศตรงนี้)
         Alpine.data('appLogic', () => ({
+            // System States
+            systemReady: false,
+            currentTab: 'booking', // booking | staff_panel
+
             // Auth States
             user: null,
+            userRole: 'user', // user | staff | admin
             authLoading: true,
             authMode: 'login',
             authForm: { email: '', password: '' },
             authError: '',
-            systemReady: false,
 
-            // App States
+            // App States (Booking)
             currentStep: 1,
             holidays: {}, 
+            holidaysArray: [], // For admin list
             form: { wing: '', type: '', date: '' },
             errorMsg: '',
             isValid: false,
             loading: false,
 
+            // Staff Panel States
+            newHoliday: { date: '', name: '' },
+
             init() {
                 console.log("System initializing...");
-                // เริ่มฟังสถานะ Login
-                onAuthStateChanged(auth, (user) => {
+                onAuthStateChanged(auth, async (user) => {
                     this.user = user;
-                    this.authLoading = false;
-                    this.systemReady = true; // ระบบพร้อมใช้งาน
                     if (user) {
+                        // เช็คสิทธิ์ User ใน Database
+                        await this.checkUserRole(user);
                         this.loadHolidays();
+                    } else {
+                        this.userRole = 'user';
                     }
+                    this.authLoading = false;
+                    this.systemReady = true;
                 });
+            },
+
+            async checkUserRole(user) {
+                const userRef = ref(db, 'users/' + user.uid);
+                const snapshot = await get(userRef);
+                if (snapshot.exists()) {
+                    // มีข้อมูลอยู่แล้ว ดึง Role มาใช้
+                    this.userRole = snapshot.val().role || 'user';
+                } else {
+                    // ผู้ใช้ใหม่ บันทึกลง DB เป็น 'user' ก่อน
+                    await set(userRef, {
+                        email: user.email,
+                        role: 'user',
+                        createdAt: new Date().toISOString()
+                    });
+                    this.userRole = 'user';
+                }
             },
 
             loadHolidays() {
                 const holidaysRef = ref(db, 'holidays');
                 onValue(holidaysRef, (snapshot) => {
-                    this.holidays = snapshot.val() || {};
+                    const data = snapshot.val() || {};
+                    this.holidays = data;
+                    // แปลงเป็น Array เพื่อแสดงใน Staff Panel
+                    this.holidaysArray = Object.keys(data).map(key => ({
+                        date: key,
+                        name: data[key]
+                    })).sort((a, b) => a.date.localeCompare(b.date));
                 });
             },
 
@@ -96,87 +124,73 @@
                     ? signInWithEmailAndPassword(auth, this.authForm.email, this.authForm.password)
                     : createUserWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
 
-                action
-                    .then((userCredential) => {
-                        this.loading = false;
-                        this.authForm = { email: '', password: '' };
-                    })
-                    .catch((error) => {
-                        this.loading = false;
-                        const errorCode = error.code;
-                        if (errorCode === 'auth/wrong-password' || errorCode === 'auth/user-not-found' || errorCode === 'auth/invalid-credential') {
-                            this.authError = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
-                        } else if (errorCode === 'auth/email-already-in-use') {
-                            this.authError = 'อีเมลนี้ถูกใช้งานแล้ว';
-                        } else if (errorCode === 'auth/weak-password') {
-                            this.authError = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
-                        } else {
-                            this.authError = 'เกิดข้อผิดพลาด: ' + error.message;
-                        }
-                    });
+                action.then(() => {
+                    this.loading = false;
+                    this.authForm = { email: '', password: '' };
+                }).catch((error) => {
+                    this.loading = false;
+                    this.authError = 'เกิดข้อผิดพลาด: ' + error.code;
+                });
             },
 
             handleLogout() {
                 signOut(auth).then(() => {
                     this.currentStep = 1;
+                    this.currentTab = 'booking';
                     this.form = { wing: '', type: '', date: '' };
                 });
             },
 
-            // --- APP LOGIC ---
-            selectWing(wingName) {
-                this.form.wing = wingName;
-                this.nextStep();
+            // --- STAFF PANEL LOGIC (จัดการวันหยุด) ---
+            addHoliday() {
+                if(!this.newHoliday.date || !this.newHoliday.name) return;
+                
+                // Save to Firebase: holidays/{YYYY-MM-DD} = "Name"
+                const hRef = ref(db, 'holidays/' + this.newHoliday.date);
+                set(hRef, this.newHoliday.name).then(() => {
+                    alert('บันทึกวันหยุด/วันออกตรวจ เรียบร้อย');
+                    this.newHoliday = { date: '', name: '' };
+                });
             },
-            selectType(typeName) {
-                this.form.type = typeName;
-                this.nextStep();
-            },
-            nextStep() {
-                if(this.currentStep < 3) this.currentStep++;
-            },
-            prevStep() {
-                if(this.currentStep > 1) {
-                    this.currentStep--;
-                    if(this.currentStep === 2) this.form.date = '';
+
+            deleteHoliday(dateKey) {
+                if(confirm('ต้องการลบรายการนี้ใช่ไหม?')) {
+                    const hRef = ref(db, 'holidays/' + dateKey);
+                    remove(hRef);
                 }
             },
+
+            // --- BOOKING LOGIC ---
+            selectWing(wingName) { this.form.wing = wingName; this.nextStep(); },
+            selectType(typeName) { this.form.type = typeName; this.nextStep(); },
+            nextStep() { if(this.currentStep < 3) this.currentStep++; },
+            prevStep() { if(this.currentStep > 1) this.currentStep--; if(this.currentStep===2) this.form.date=''; },
 
             checkDate() {
                 this.isValid = false;
                 this.errorMsg = '';
                 if (!this.form.date) return;
-
                 const dateObj = new Date(this.form.date);
                 const day = dateObj.getDay(); 
                 const dateStr = this.form.date;
 
-                // 1. Holiday Check
                 if (this.holidays[dateStr]) {
-                    this.errorMsg = `ตรงกับวันหยุด: ${this.holidays[dateStr]}`;
+                    this.errorMsg = `ตรงกับ: ${this.holidays[dateStr]}`;
                     return;
                 }
                 if (day === 0 || day === 6) {
                     this.errorMsg = "ไม่รับส่งวันเสาร์-อาทิตย์";
                     return;
                 }
-
-                // 2. Good Water
-                if (this.form.type === 'good') {
-                    if (day > 3) { 
-                        this.errorMsg = "น้ำดีส่งได้เฉพาะ จันทร์-พุธ";
-                        return;
-                    }
+                if (this.form.type === 'good' && day > 3) { 
+                    this.errorMsg = "น้ำดีส่งได้เฉพาะ จันทร์-พุธ";
+                    return;
                 }
-
-                // 3. Waste Water
                 if (this.form.type === 'waste') {
-                    // อังคาร(2) - พฤหัส(4)
                     if (day < 2 || day > 4) {
                         this.errorMsg = "น้ำเสียส่งได้เฉพาะ อังคาร - พฤหัสบดี";
                         return;
                     }
-                    
                     const next5 = new Date(dateObj);
                     next5.setDate(dateObj.getDate() + 5);
                     const day5 = next5.getDay();
@@ -191,14 +205,12 @@
                         return;
                     }
                 }
-
                 this.isValid = true;
             },
 
             submit() {
                 if (!this.isValid) return;
                 this.loading = true;
-
                 const newBookingRef = push(ref(db, 'bookings'));
                 set(newBookingRef, {
                     ...this.form,
@@ -211,23 +223,17 @@
                     this.currentStep = 1;
                     this.form = { wing: '', type: '', date: '' };
                     this.loading = false;
-                }).catch((e) => {
-                    alert('Error: ' + e.message);
-                    this.loading = false;
                 });
             }
         }));
-
-        // 4. สั่งเริ่ม Alpine หลังจากประกาศ Data เสร็จแล้ว (สำคัญมาก!)
         Alpine.start();
     </script>
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" x-data="appLogic()" x-cloak>
 
-    <!-- Loading Screen (แสดงตอนเริ่มโหลดระบบ) -->
-    <div x-show="!systemReady" class="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center transition-opacity duration-500">
+    <!-- Loading -->
+    <div x-show="!systemReady" class="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700"></div>
-        <p class="mt-4 text-slate-500 text-sm">กำลังเชื่อมต่อฐานข้อมูล...</p>
     </div>
 
     <!-- Header -->
@@ -238,24 +244,30 @@
                 <p class="text-xs text-blue-200 opacity-90 mt-1">กรมแพทย์ทหารอากาศ</p>
             </div>
             
-            <!-- User Info -->
             <template x-if="user">
                 <div class="flex flex-col items-end">
-                    <span class="text-xs text-blue-100 mb-1" x-text="user.email.split('@')[0]"></span>
-                    <button @click="handleLogout()" class="text-xs bg-red-500/20 hover:bg-red-500/40 px-2 py-1 rounded border border-red-400/30 transition">
-                        ออกจากระบบ
-                    </button>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full" x-text="userRole === 'admin' ? 'Admin' : (userRole === 'staff' ? 'จนท.' : 'User')"></span>
+                        <span class="text-xs text-blue-100" x-text="user.email.split('@')[0]"></span>
+                    </div>
+                    <button @click="handleLogout()" class="text-[10px] underline text-blue-200 mt-1">ออกจากระบบ</button>
                 </div>
             </template>
         </div>
-        
-        <!-- Steps -->
-        <template x-if="user">
-            <div class="flex items-center space-x-2 justify-center mt-4">
-                <template x-for="step in 3">
-                    <div class="w-2 h-2 rounded-full transition-all duration-300"
-                         :class="currentStep >= step ? 'bg-white scale-125' : 'bg-blue-400 opacity-50'"></div>
-                </template>
+
+        <!-- Menu Bar (แสดงเฉพาะ Admin/Staff) -->
+        <template x-if="user && (userRole === 'admin' || userRole === 'staff')">
+            <div class="flex justify-center mt-4 space-x-2">
+                <button @click="currentTab = 'booking'" 
+                        class="px-4 py-1.5 rounded-full text-xs font-bold transition"
+                        :class="currentTab === 'booking' ? 'bg-white text-blue-800' : 'bg-blue-900/50 text-blue-200'">
+                    จองคิว
+                </button>
+                <button @click="currentTab = 'staff_panel'" 
+                        class="px-4 py-1.5 rounded-full text-xs font-bold transition"
+                        :class="currentTab === 'staff_panel' ? 'bg-white text-blue-800' : 'bg-blue-900/50 text-blue-200'">
+                    จัดการวันหยุด/ตรวจ
+                </button>
             </div>
         </template>
     </header>
@@ -263,187 +275,100 @@
     <!-- Main Content -->
     <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar">
         
-        <!-- LOGIN SCENE -->
-        <div x-show="!user && systemReady" x-transition.opacity class="flex flex-col items-center justify-center h-full space-y-6">
-            
-            <div class="text-center space-y-2">
-                <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-700 shadow-inner">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.131A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.2-2.858.59-4.18M5.55 17.79c-.18.325-.38.63-.59.907M20 20l-1.95-3.95" />
-                    </svg>
-                </div>
-                <h2 class="text-xl font-bold text-slate-800" x-text="authMode === 'login' ? 'เข้าสู่ระบบ' : 'ลงทะเบียนใหม่'"></h2>
-                <p class="text-sm text-slate-500">เพื่อใช้งานระบบจองคิวและดูประวัติย้อนหลัง</p>
+        <!-- 1. LOGIN SCREEN -->
+        <div x-show="!user && systemReady" class="flex flex-col items-center justify-center h-full space-y-6">
+            <div class="text-center">
+                <h2 class="text-xl font-bold text-slate-800" x-text="authMode === 'login' ? 'เข้าสู่ระบบเจ้าหน้าที่/กองบิน' : 'ลงทะเบียนใหม่'"></h2>
+                <p class="text-sm text-slate-500">กรมแพทย์ทหารอากาศ</p>
             </div>
-
             <div class="w-full bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-                <div>
-                    <label class="block text-sm font-semibold text-slate-600 mb-1">อีเมล</label>
-                    <input type="email" x-model="authForm.email" placeholder="example@rtaf.mi.th" 
-                           class="w-full p-3 rounded-xl border bg-slate-50 focus:border-blue-500 focus:outline-none transition">
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-slate-600 mb-1">รหัสผ่าน</label>
-                    <input type="password" x-model="authForm.password" placeholder="••••••••" 
-                           class="w-full p-3 rounded-xl border bg-slate-50 focus:border-blue-500 focus:outline-none transition">
-                </div>
-                
-                <p x-show="authError" x-text="authError" class="text-red-500 text-xs font-semibold text-center"></p>
-
-                <button @click="handleAuth()" 
-                        :disabled="loading"
-                        class="w-full py-3 rounded-xl text-white font-bold shadow-md transition-all active:scale-95"
-                        :class="loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'">
-                    <span x-show="!loading" x-text="authMode === 'login' ? 'เข้าสู่ระบบ' : 'สมัครสมาชิก'"></span>
+                <input type="email" x-model="authForm.email" placeholder="Email" class="w-full p-3 rounded-xl border bg-slate-50">
+                <input type="password" x-model="authForm.password" placeholder="Password" class="w-full p-3 rounded-xl border bg-slate-50">
+                <p x-show="authError" x-text="authError" class="text-red-500 text-xs text-center"></p>
+                <button @click="handleAuth()" :disabled="loading" class="w-full py-3 rounded-xl text-white font-bold bg-blue-600 hover:bg-blue-700 shadow-md">
+                    <span x-show="!loading" x-text="authMode === 'login' ? 'เข้าสู่ระบบ' : 'ลงทะเบียน'"></span>
                     <span x-show="loading">กำลังประมวลผล...</span>
                 </button>
             </div>
-
-            <div class="text-center text-sm text-slate-500">
-                <span x-text="authMode === 'login' ? 'ยังไม่มีบัญชีใช่ไหม?' : 'มีบัญชีอยู่แล้ว?'"></span>
-                <button @click="toggleAuthMode()" class="text-blue-600 font-bold hover:underline ml-1">
-                    <span x-text="authMode === 'login' ? 'ลงทะเบียน' : 'เข้าสู่ระบบ'"></span>
-                </button>
-            </div>
+            <button @click="toggleAuthMode()" class="text-sm text-blue-600 font-bold hover:underline">
+                <span x-text="authMode === 'login' ? 'สมัครสมาชิกใหม่' : 'กลับไปหน้าเข้าสู่ระบบ'"></span>
+            </button>
         </div>
 
-
-        <!-- APP WIZARD -->
-        <template x-if="user && systemReady">
+        <!-- 2. BOOKING WIZARD (สำหรับทุกคน) -->
+        <template x-if="user && currentTab === 'booking'">
             <div class="h-full flex flex-col">
-                <!-- STEP 1 -->
-                <div x-show="currentStep === 1" 
-                     x-transition:enter="transition ease-out duration-300"
-                     x-transition:enter-start="opacity-0 translate-x-10"
-                     x-transition:enter-end="opacity-100 translate-x-0"
-                     class="space-y-4">
-                    
-                    <div class="text-center py-4">
-                        <h2 class="text-2xl font-bold text-slate-800">เลือกหน่วยงาน</h2>
-                        <p class="text-gray-500">กรุณาระบุสังกัดของท่าน</p>
-                    </div>
-
-                    <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-100 h-96 overflow-y-auto">
+                <!-- Step 1 -->
+                <div x-show="currentStep === 1">
+                    <h2 class="text-xl font-bold text-center mb-4 text-slate-700">เลือกหน่วยงาน</h2>
+                    <div class="bg-white p-2 rounded-2xl shadow-sm border h-96 overflow-y-auto">
                         <template x-for="i in 17">
-                            <button @click="selectWing('กองบิน ' + i)"
-                                    class="w-full text-left p-4 mb-2 rounded-xl transition-all border border-transparent hover:border-blue-500 hover:bg-blue-50 flex items-center justify-between group"
-                                    :class="form.wing === 'กองบิน ' + i ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-50 text-slate-700'">
-                                <span class="font-semibold text-lg" x-text="'กองบิน ' + i"></span>
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-50 group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                                </svg>
+                            <button @click="selectWing('กองบิน ' + i)" class="w-full text-left p-4 mb-2 rounded-xl hover:bg-blue-50 flex justify-between border-b last:border-0" 
+                                    :class="form.wing === 'กองบิน '+i ? 'bg-blue-600 text-white' : ''">
+                                <span x-text="'กองบิน ' + i"></span>
+                                <span class="text-gray-400">></span>
                             </button>
                         </template>
                     </div>
                 </div>
-
-                <!-- STEP 2 -->
-                <div x-show="currentStep === 2" 
-                     x-transition:enter="transition ease-out duration-300"
-                     x-transition:enter-start="opacity-0 translate-x-10"
-                     x-transition:enter-end="opacity-100 translate-x-0"
-                     class="space-y-6 pt-4">
-                    
-                    <div class="text-center">
-                        <h2 class="text-2xl font-bold text-slate-800">ประเภทตัวอย่างน้ำ</h2>
-                        <p class="text-gray-500">เลือกประเภทน้ำที่ต้องการส่งตรวจ</p>
+                <!-- Step 2 -->
+                <div x-show="currentStep === 2" class="space-y-4">
+                    <h2 class="text-xl font-bold text-center mb-4 text-slate-700">เลือกประเภทน้ำ</h2>
+                    <button @click="selectType('good')" class="w-full p-6 rounded-2xl border-2 hover:border-blue-500 bg-white shadow-sm">
+                        <div class="text-lg font-bold text-blue-700">น้ำดี (ประปา)</div>
+                        <div class="text-sm text-gray-500">จันทร์ - พุธ</div>
+                    </button>
+                    <button @click="selectType('waste')" class="w-full p-6 rounded-2xl border-2 hover:border-red-500 bg-white shadow-sm">
+                        <div class="text-lg font-bold text-red-700">น้ำเสีย</div>
+                        <div class="text-sm text-gray-500">อังคาร - พฤหัสบดี (บ่ม 5 วัน)</div>
+                    </button>
+                </div>
+                <!-- Step 3 -->
+                <div x-show="currentStep === 3" class="space-y-4">
+                    <h2 class="text-xl font-bold text-center mb-4 text-slate-700">เลือกวันที่</h2>
+                    <div class="bg-white p-6 rounded-2xl border shadow-sm">
+                        <input type="date" x-model="form.date" @change="checkDate()" class="w-full p-3 text-center text-xl font-bold bg-slate-100 rounded-xl">
+                        <div x-show="errorMsg" class="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm font-bold flex items-center">
+                            <span class="mr-2">❌</span> <span x-text="errorMsg"></span>
+                        </div>
+                        <div x-show="!errorMsg && form.date" class="mt-4 p-3 bg-green-50 text-green-600 rounded-lg text-sm font-bold flex items-center">
+                            <span class="mr-2">✅</span> <span>วันว่าง! สามารถจองได้</span>
+                        </div>
                     </div>
+                    <button x-show="!errorMsg && form.date" @click="submit()" :disabled="loading" class="w-full py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg">
+                        <span x-show="!loading">ยืนยันการจอง</span>
+                        <span x-show="loading">บันทึก...</span>
+                    </button>
+                </div>
+            </div>
+        </template>
 
-                    <div class="grid gap-4">
-                        <button @click="selectType('good')" class="relative p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col items-center space-y-3 bg-white"
-                             :class="form.type === 'good' ? 'border-blue-500 bg-blue-50 ring-4 ring-blue-100' : 'border-slate-100 hover:border-blue-200'">
-                            <div class="bg-blue-100 p-4 rounded-full text-blue-600">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2.34" />
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v20m-5-5l5-5 5 5" />
-                                </svg>
-                            </div>
-                            <div class="text-center">
-                                <h3 class="text-xl font-bold text-slate-800">น้ำดี (น้ำประปา)</h3>
-                                <p class="text-sm text-slate-500">ส่งได้ จันทร์ - พุธ</p>
-                            </div>
-                            <div x-show="form.type === 'good'" class="absolute top-4 right-4 text-blue-500">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                            </div>
-                        </button>
-
-                        <button @click="selectType('waste')" class="relative p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col items-center space-y-3 bg-white"
-                             :class="form.type === 'waste' ? 'border-red-500 bg-red-50 ring-4 ring-red-100' : 'border-slate-100 hover:border-red-200'">
-                            <div class="bg-red-100 p-4 rounded-full text-red-600">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                                </svg>
-                            </div>
-                            <div class="text-center">
-                                <h3 class="text-xl font-bold text-slate-800">น้ำเสีย</h3>
-                                <p class="text-sm text-slate-500">ส่งได้ อังคาร - พฤหัสบดี (บ่ม 5 วัน)</p>
-                            </div>
-                            <div x-show="form.type === 'waste'" class="absolute top-4 right-4 text-red-500">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                                </svg>
-                            </div>
-                        </button>
+        <!-- 3. STAFF PANEL (จัดการวันหยุด) -->
+        <template x-if="user && currentTab === 'staff_panel'">
+            <div class="space-y-4">
+                <div class="bg-yellow-50 p-4 rounded-xl border border-yellow-200">
+                    <h3 class="font-bold text-yellow-800 mb-2">เพิ่มวันหยุด / วันออกตรวจ</h3>
+                    <div class="flex flex-col space-y-2">
+                        <input type="date" x-model="newHoliday.date" class="p-2 rounded border">
+                        <input type="text" x-model="newHoliday.name" placeholder="ชื่อวันหยุด (เช่น ออกตรวจ)" class="p-2 rounded border">
+                        <button @click="addHoliday()" class="bg-yellow-600 text-white py-2 rounded font-bold hover:bg-yellow-700">บันทึก</button>
                     </div>
                 </div>
 
-                <!-- STEP 3 -->
-                <div x-show="currentStep === 3" 
-                     x-transition:enter="transition ease-out duration-300"
-                     x-transition:enter-start="opacity-0 translate-x-10"
-                     x-transition:enter-end="opacity-100 translate-x-0"
-                     class="space-y-6 pt-4">
-                    
-                    <div class="text-center">
-                        <h2 class="text-2xl font-bold text-slate-800">เลือกวันส่งตัวอย่าง</h2>
-                        <p class="text-gray-500" x-text="'สำหรับ ' + form.wing + ' (' + (form.type=='good'?'น้ำดี':'น้ำเสีย') + ')'"></p>
-                    </div>
-
-                    <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
-                        <label class="block text-sm font-bold text-slate-700 mb-2">แตะเพื่อเลือกวันที่</label>
-                        <input type="date" x-model="form.date" @change="checkDate()" 
-                               class="w-full text-center text-2xl font-bold p-4 rounded-xl bg-slate-50 border-2 focus:border-blue-500 focus:outline-none text-slate-800">
-                        
-                        <div x-show="form.date" class="mt-4 transition-all duration-300">
-                            <!-- Error -->
-                            <div x-show="errorMsg" class="bg-red-50 border border-red-100 p-4 rounded-xl flex items-start space-x-3">
-                                <div class="bg-red-100 p-2 rounded-full text-red-600 shrink-0">
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-                                    </svg>
-                                </div>
+                <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                    <div class="bg-slate-100 p-3 font-bold text-slate-600">รายการวันหยุดในระบบ</div>
+                    <div class="divide-y">
+                        <template x-for="h in holidaysArray">
+                            <div class="p-3 flex justify-between items-center">
                                 <div>
-                                    <h4 class="font-bold text-red-700">จองไม่ได้</h4>
-                                    <p class="text-sm text-red-600 mt-1" x-text="errorMsg"></p>
+                                    <div class="font-bold text-slate-800" x-text="h.date"></div>
+                                    <div class="text-sm text-slate-500" x-text="h.name"></div>
                                 </div>
+                                <button @click="deleteHoliday(h.date)" class="text-red-500 text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50">ลบ</button>
                             </div>
-                            <!-- Success -->
-                            <div x-show="!errorMsg && form.date" class="bg-green-50 border border-green-100 p-4 rounded-xl flex items-center space-x-3">
-                                 <div class="bg-green-100 p-2 rounded-full text-green-600 shrink-0">
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <h4 class="font-bold text-green-700">วันว่าง! สามารถจองได้</h4>
-                                    <p class="text-xs text-green-600 mt-1" x-show="form.type==='waste'">*คำนวณวันบ่ม BOD5 เรียบร้อยแล้ว</p>
-                                </div>
-                            </div>
-                        </div>
+                        </template>
+                        <div x-show="holidaysArray.length === 0" class="p-4 text-center text-gray-400 text-sm">ยังไม่มีข้อมูลวันหยุด</div>
                     </div>
-
-                    <button @click="submit()" 
-                            :disabled="!isValid || loading"
-                            x-show="!errorMsg && form.date"
-                            class="w-full py-4 rounded-2xl text-white font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95"
-                            :class="loading ? 'bg-gray-400' : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:shadow-xl'">
-                        <span x-show="!loading" class="flex items-center justify-center space-x-2">
-                            <span>ยืนยันการจองคิว</span>
-                        </span>
-                        <span x-show="loading">กำลังบันทึกข้อมูล...</span>
-                    </button>
                 </div>
             </div>
         </template>
@@ -452,13 +377,8 @@
 
     <!-- Footer -->
     <footer class="p-3 bg-white border-t border-slate-100 z-20 shrink-0">
-        <div x-show="user && currentStep > 1" class="mb-2">
-            <button @click="prevStep()" class="text-slate-500 font-semibold flex items-center justify-center space-x-2 px-4 py-2 rounded-lg hover:bg-slate-50 w-full">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
-                </svg>
-                <span>ย้อนกลับ</span>
-            </button>
+        <div x-show="user && currentTab === 'booking' && currentStep > 1" class="mb-2">
+            <button @click="prevStep()" class="w-full py-2 bg-slate-100 text-slate-600 rounded-lg font-bold">ย้อนกลับ</button>
         </div>
         <div class="text-center">
             <p class="text-[10px] text-slate-400 font-light">จัดทำโดย ผสภ.กวป.พอ.</p>
