@@ -11,12 +11,15 @@
         body { font-family: 'Sarabun', sans-serif; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         [x-cloak] { display: none !important; }
+        /* Animation สำหรับเปลี่ยน Tab */
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
     </style>
 
     <script type="module">
         import Alpine from 'https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/module.esm.js';
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getDatabase, ref, push, set, onValue, remove, update, get } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+        import { getDatabase, ref, push, set, onValue, remove, update, get, query, orderByChild, equalTo } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 
         const firebaseConfig = {
@@ -35,28 +38,33 @@
         const auth = getAuth(app);
 
         Alpine.data('appLogic', () => ({
-            // System States
+            // System
             systemReady: false,
-            currentTab: 'booking', 
-
-            // Auth States
+            currentTab: 'booking', // booking | history | staff_panel
+            
+            // Auth
             user: null,
             userRole: 'user', 
-            userWing: '', // เก็บชื่อหน่วยงานของผู้ใช้
+            userWing: '',
             authLoading: true,
             authMode: 'login',
             authForm: { email: '', password: '', wing: '' }, 
             authError: '',
 
-            // App States (Booking)
-            currentStep: 1, 
+            // App Data
             holidays: {}, 
             holidaysArray: [],
+            userBookings: [], // ประวัติการจองของผู้ใช้
+
+            // Booking Wizard
+            currentStep: 1, 
             form: { type: '', date: '' },
-            errorMsg: '',
-            isValid: false,
             loading: false,
 
+            // Calendar Logic
+            calDate: new Date(), // เดือนที่แสดงอยู่
+            calendarDays: [],
+            
             // Staff Panel
             newHoliday: { date: '', name: '' },
 
@@ -67,6 +75,7 @@
                     if (user) {
                         await this.fetchUserData(user);
                         this.loadHolidays();
+                        this.loadUserBookings(); // โหลดประวัติ
                     } else {
                         this.resetUserState();
                     }
@@ -92,6 +101,7 @@
                 this.userRole = 'user';
                 this.userWing = '';
                 this.currentStep = 1;
+                this.userBookings = [];
             },
 
             loadHolidays() {
@@ -102,108 +112,157 @@
                     this.holidaysArray = Object.keys(data).map(key => ({
                         date: key, name: data[key]
                     })).sort((a, b) => a.date.localeCompare(b.date));
+                    
+                    // Re-render calendar if open
+                    if(this.currentStep === 2) this.generateCalendar();
+                });
+            },
+
+            loadUserBookings() {
+                if(!this.user) return;
+                const bookingsRef = ref(db, 'bookings');
+                // ดึงมาทั้งหมดแล้ว Filter ฝั่ง Client (ง่ายกว่าสำหรับ Structure นี้) 
+                // หรือถ้า data เยอะควรใช้ query orderByChild('userId').equalTo(this.user.uid)
+                onValue(bookingsRef, (snapshot) => {
+                    const data = snapshot.val() || {};
+                    this.userBookings = Object.keys(data)
+                        .map(key => ({ id: key, ...data[key] }))
+                        .filter(item => item.userId === this.user.uid || this.userRole === 'admin' || this.userRole === 'staff') // Admin/Staff เห็นหมด (หรือแก้ให้เห็นเฉพาะของตัวเองก็ได้)
+                        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
                 });
             },
 
             // --- AUTH ---
-            toggleAuthMode() {
-                this.authMode = this.authMode === 'login' ? 'register' : 'login';
-                this.authError = '';
-                this.authForm = { email: '', password: '', wing: '' };
-            },
-
+            toggleAuthMode() { this.authMode = this.authMode === 'login' ? 'register' : 'login'; this.authError = ''; },
             async handleAuth() {
                 this.authError = '';
-                if (!this.authForm.email || !this.authForm.password) {
-                    this.authError = 'กรุณากรอกข้อมูลให้ครบถ้วน'; return;
-                }
-                
-                // ถ้าสมัครสมาชิก ต้องระบุหน่วยงาน
-                if (this.authMode === 'register' && !this.authForm.wing) {
-                    this.authError = 'กรุณาระบุชื่อหน่วยงาน'; return;
-                }
+                if (!this.authForm.email || !this.authForm.password) { this.authError = 'กรุณากรอกข้อมูลให้ครบ'; return; }
+                if (this.authMode === 'register' && !this.authForm.wing) { this.authError = 'กรุณาระบุหน่วยงาน'; return; }
 
                 this.loading = true;
                 try {
                     if (this.authMode === 'register') {
-                        // 1. สร้าง User
-                        const userCredential = await createUserWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
-                        const user = userCredential.user;
-                        
-                        // 2. บันทึกข้อมูลหน่วยงาน
-                        await set(ref(db, 'users/' + user.uid), {
+                        const cred = await createUserWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
+                        await set(ref(db, 'users/' + cred.user.uid), {
                             email: this.authForm.email,
-                            wing: this.authForm.wing, // บันทึกชื่อหน่วยงานที่พิมพ์มา
+                            wing: this.authForm.wing,
                             role: 'user',
                             createdAt: new Date().toISOString()
                         });
-                        
                         this.userWing = this.authForm.wing;
-                        
                     } else {
-                        // Login
                         await signInWithEmailAndPassword(auth, this.authForm.email, this.authForm.password);
                     }
                     this.authForm = { email: '', password: '', wing: '' };
                 } catch (error) {
-                    const code = error.code;
-                    if (code === 'auth/configuration-not-found') this.authError = 'ระบบยังไม่เปิดใช้งาน Login (แจ้ง Admin เปิด Email/Password)';
-                    else if (code === 'auth/email-already-in-use') this.authError = 'อีเมลนี้ถูกใช้งานแล้ว';
-                    else if (code === 'auth/wrong-password' || code === 'auth/user-not-found' || code === 'auth/invalid-credential') this.authError = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
-                    else if (code === 'auth/weak-password') this.authError = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
-                    else this.authError = 'เกิดข้อผิดพลาด: ' + code;
+                    this.authError = 'เกิดข้อผิดพลาด: ' + error.code;
                 } finally {
                     this.loading = false;
                 }
             },
+            handleLogout() { signOut(auth); },
 
-            handleLogout() {
-                signOut(auth);
-            },
-
-            // --- STAFF PANEL ---
+            // --- STAFF ---
             addHoliday() {
                 if(!this.newHoliday.date || !this.newHoliday.name) return;
-                set(ref(db, 'holidays/' + this.newHoliday.date), this.newHoliday.name).then(() => {
-                    alert('บันทึกเรียบร้อย'); this.newHoliday = { date: '', name: '' };
-                });
+                set(ref(db, 'holidays/' + this.newHoliday.date), this.newHoliday.name);
+                this.newHoliday = { date: '', name: '' };
             },
             deleteHoliday(dateKey) {
-                if(confirm('ลบรายการนี้?')) remove(ref(db, 'holidays/' + dateKey));
+                if(confirm('ลบ?')) remove(ref(db, 'holidays/' + dateKey));
             },
 
-            // --- BOOKING LOGIC ---
-            selectType(typeName) { this.form.type = typeName; this.nextStep(); },
+            // --- BOOKING & CALENDAR LOGIC ---
+            selectType(typeName) { 
+                this.form.type = typeName; 
+                this.generateCalendar(); // สร้างปฏิทินทันทีเมื่อเลือกประเภท
+                this.nextStep(); 
+            },
             nextStep() { if(this.currentStep < 2) this.currentStep++; },
-            prevStep() { if(this.currentStep > 1) this.currentStep--; if(this.currentStep===1) this.form.date=''; },
+            prevStep() { if(this.currentStep > 1) this.currentStep--; },
 
-            checkDate() {
-                this.isValid = false; this.errorMsg = '';
-                if (!this.form.date) return;
-                const dateObj = new Date(this.form.date);
-                const day = dateObj.getDay(); 
-                const dateStr = this.form.date;
-
-                if (this.holidays[dateStr]) { this.errorMsg = `ตรงกับ: ${this.holidays[dateStr]}`; return; }
-                if (day === 0 || day === 6) { this.errorMsg = "ไม่รับส่งวันเสาร์-อาทิตย์"; return; }
+            // Calendar Generation
+            changeMonth(offset) {
+                this.calDate = new Date(this.calDate.getFullYear(), this.calDate.getMonth() + offset, 1);
+                this.generateCalendar();
+            },
+            
+            generateCalendar() {
+                const year = this.calDate.getFullYear();
+                const month = this.calDate.getMonth();
+                const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
                 
-                if (this.form.type === 'good' && day > 3) { this.errorMsg = "น้ำดีส่งได้เฉพาะ จันทร์-พุธ"; return; }
-                
-                if (this.form.type === 'waste') {
-                    if (day < 2 || day > 4) { this.errorMsg = "น้ำเสียส่งได้เฉพาะ อังคาร - พฤหัสบดี"; return; }
-                    const next5 = new Date(dateObj);
-                    next5.setDate(dateObj.getDate() + 5);
-                    const day5 = next5.getDay();
-                    const next5Str = next5.toISOString().split('T')[0];
-
-                    if (day5 === 0 || day5 === 6) { this.errorMsg = "BOD5 ตรงกับ เสาร์-อาทิตย์"; return; }
-                    if (this.holidays[next5Str]) { this.errorMsg = `BOD5 ตรงกับวันหยุด (${this.holidays[next5Str]})`; return; }
+                let days = [];
+                // Empty slots for prev month
+                for (let i = 0; i < firstDay; i++) {
+                    days.push({ blank: true });
                 }
-                this.isValid = true;
+
+                const today = new Date();
+                today.setHours(0,0,0,0);
+
+                for (let i = 1; i <= daysInMonth; i++) {
+                    const dateObj = new Date(year, month, i);
+                    const dateStr = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+                    
+                    // Logic การตรวจสอบ (เหมือน checkDate เดิม)
+                    let status = 'available'; // available, unavailable, selected
+                    let reason = '';
+
+                    // 1. Past Date
+                    if (dateObj < today) {
+                        status = 'unavailable'; reason = 'ผ่านมาแล้ว';
+                    }
+                    // 2. Holiday
+                    else if (this.holidays[dateStr]) {
+                        status = 'unavailable'; reason = this.holidays[dateStr];
+                    }
+                    // 3. Weekend
+                    else if (dateObj.getDay() === 0 || dateObj.getDay() === 6) {
+                        status = 'unavailable'; reason = 'วันหยุดเสาร์-อาทิตย์';
+                    }
+                    else if (this.form.type === 'good') {
+                        // Mon(1) - Wed(3)
+                        if (dateObj.getDay() > 3) { status = 'unavailable'; reason = 'รับเฉพาะ จ-พ'; }
+                    }
+                    else if (this.form.type === 'waste') {
+                        // Tue(2) - Thu(4)
+                        if (dateObj.getDay() < 2 || dateObj.getDay() > 4) { 
+                            status = 'unavailable'; reason = 'รับเฉพาะ อ-พฤ'; 
+                        } else {
+                            // BOD5 Check
+                            const next5 = new Date(dateObj);
+                            next5.setDate(dateObj.getDate() + 5);
+                            const next5Str = next5.toISOString().split('T')[0];
+                            if (next5.getDay() === 0 || next5.getDay() === 6) {
+                                status = 'unavailable'; reason = 'วันอ่านผล(5วัน) ตรงเสาร์อาทิตย์';
+                            }
+                            if (this.holidays[next5Str]) {
+                                status = 'unavailable'; reason = `วันอ่านผลตรงวันหยุด (${this.holidays[next5Str]})`;
+                            }
+                        }
+                    }
+
+                    days.push({
+                        day: i,
+                        fullDate: dateStr,
+                        status: status,
+                        reason: reason,
+                        selected: this.form.date === dateStr
+                    });
+                }
+                this.calendarDays = days;
+            },
+
+            selectDate(dayObj) {
+                if (dayObj.status === 'unavailable' || dayObj.blank) return;
+                this.form.date = dayObj.fullDate;
+                this.generateCalendar(); // Re-render to show selection
             },
 
             submit() {
-                if (!this.isValid) return;
+                if (!this.form.date) return;
                 this.loading = true;
                 const newBookingRef = push(ref(db, 'bookings'));
                 set(newBookingRef, {
@@ -212,12 +271,31 @@
                     userId: this.user.uid,
                     userEmail: this.user.email,
                     timestamp: new Date().toISOString(),
-                    status: 'pending'
+                    status: 'รอตรวจสอบ' // Pending
                 }).then(() => {
-                    alert('🎉 จองคิวสำเร็จ! \nเจ้าหน้าที่ได้รับข้อมูลเรียบร้อยแล้ว');
-                    this.currentStep = 1; this.form = { type: '', date: '' };
+                    alert('🎉 จองคิวสำเร็จ! ดูสถานะได้ที่เมนู "ติดตามผล"');
+                    this.currentStep = 1; 
+                    this.form = { type: '', date: '' };
+                    this.currentTab = 'history'; // เด้งไปหน้าผล
                     this.loading = false;
                 });
+            },
+
+            // Formats
+            formatDate(dateStr) {
+                if(!dateStr) return '-';
+                const d = new Date(dateStr);
+                return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+            },
+            getMonthName(date) {
+                return date.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+            },
+            getStatusColor(status) {
+                if(status === 'รอตรวจสอบ') return 'bg-yellow-100 text-yellow-800';
+                if(status === 'อนุมัติ/รับเรื่อง') return 'bg-green-100 text-green-800';
+                if(status === 'ปฏิเสธ') return 'bg-red-100 text-red-800';
+                if(status === 'ผลออกแล้ว') return 'bg-blue-100 text-blue-800 font-bold';
+                return 'bg-gray-100 text-gray-800';
             }
         }));
         Alpine.start();
@@ -245,37 +323,25 @@
                         <span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full" x-text="userRole === 'admin' ? 'Admin' : (userRole === 'staff' ? 'จนท.' : 'User')"></span>
                         <span class="text-xs text-blue-100" x-text="user.email.split('@')[0]"></span>
                     </div>
-                    <button @click="handleLogout()" class="text-[10px] underline text-blue-200 mt-1">ออกจากระบบ</button>
                 </div>
             </template>
         </div>
-
-        <!-- Menu Bar -->
-        <template x-if="user && (userRole === 'admin' || userRole === 'staff')">
-            <div class="flex justify-center mt-4 space-x-2">
-                <button @click="currentTab = 'booking'" class="px-4 py-1.5 rounded-full text-xs font-bold transition" :class="currentTab === 'booking' ? 'bg-white text-blue-800' : 'bg-blue-900/50 text-blue-200'">จองคิว</button>
-                <button @click="currentTab = 'staff_panel'" class="px-4 py-1.5 rounded-full text-xs font-bold transition" :class="currentTab === 'staff_panel' ? 'bg-white text-blue-800' : 'bg-blue-900/50 text-blue-200'">จัดการวันหยุด</button>
-            </div>
-        </template>
     </header>
 
     <!-- Main Content -->
-    <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar">
+    <main class="flex-1 relative max-w-md mx-auto w-full p-4 overflow-y-auto no-scrollbar pb-24">
         
-        <!-- 1. LOGIN / REGISTER -->
+        <!-- LOGIN -->
         <div x-show="!user && systemReady" class="flex flex-col items-center justify-center h-full space-y-6">
             <div class="text-center">
-                <h2 class="text-xl font-bold text-slate-800" x-text="authMode === 'login' ? 'เข้าสู่ระบบ' : 'ลงทะเบียนใหม่'"></h2>
-                <p class="text-sm text-slate-500">กรุณาระบุตัวตนเพื่อใช้งาน</p>
+                <h2 class="text-xl font-bold text-slate-800">เข้าสู่ระบบ</h2>
+                <p class="text-sm text-slate-500">เพื่อจองคิวและดูผลการตรวจ</p>
             </div>
-            <div class="w-full bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-                
-                <!-- เลือกหน่วยงาน (พิมพ์เอง) -->
+            <div class="w-full bg-white p-6 rounded-2xl shadow-sm border space-y-4">
                 <div x-show="authMode === 'register'">
                     <label class="text-xs font-bold text-slate-500 ml-1">หน่วยงาน</label>
-                    <input type="text" x-model="authForm.wing" placeholder="ระบุชื่อหน่วยงาน (เช่น กองบิน 1, รพ.ภูมิพล)" class="w-full p-3 rounded-xl border bg-slate-50 mt-1">
+                    <input type="text" x-model="authForm.wing" placeholder="ชื่อหน่วยงาน" class="w-full p-3 rounded-xl border bg-slate-50 mt-1">
                 </div>
-
                 <div>
                     <label class="text-xs font-bold text-slate-500 ml-1">อีเมล</label>
                     <input type="email" x-model="authForm.email" placeholder="Email" class="w-full p-3 rounded-xl border bg-slate-50 mt-1">
@@ -284,118 +350,215 @@
                     <label class="text-xs font-bold text-slate-500 ml-1">รหัสผ่าน</label>
                     <input type="password" x-model="authForm.password" placeholder="Password" class="w-full p-3 rounded-xl border bg-slate-50 mt-1">
                 </div>
-                
                 <p x-show="authError" x-text="authError" class="text-red-500 text-xs text-center"></p>
-
-                <button @click="handleAuth()" :disabled="loading" class="w-full py-3 rounded-xl text-white font-bold bg-blue-600 hover:bg-blue-700 shadow-md">
+                <button @click="handleAuth()" :disabled="loading" class="w-full py-3 rounded-xl text-white font-bold bg-blue-600 shadow-md">
                     <span x-show="!loading" x-text="authMode === 'login' ? 'เข้าสู่ระบบ' : 'ลงทะเบียน'"></span>
-                    <span x-show="loading">กำลังประมวลผล...</span>
+                    <span x-show="loading">...</span>
                 </button>
             </div>
-            <button @click="toggleAuthMode()" class="text-sm text-blue-600 font-bold hover:underline">
-                <span x-text="authMode === 'login' ? 'สมัครสมาชิกใหม่' : 'กลับไปหน้าเข้าสู่ระบบ'"></span>
-            </button>
+            <button @click="toggleAuthMode()" class="text-sm text-blue-600 underline" x-text="authMode === 'login' ? 'สมัครสมาชิกใหม่' : 'กลับไปหน้าเข้าสู่ระบบ'"></button>
         </div>
 
-        <!-- 2. BOOKING WIZARD -->
+        <!-- 1. BOOKING TAB -->
         <template x-if="user && currentTab === 'booking'">
             <div class="h-full flex flex-col">
-                
-                <!-- Header ย่อย -->
-                <div class="text-center mb-6">
-                    <h2 class="text-2xl font-bold text-slate-800">ส่งตัวอย่างน้ำ</h2>
-                    <p class="text-slate-500" x-text="'หน่วยงาน: ' + userWing"></p>
-                </div>
-
                 <!-- Step 1: เลือกประเภท -->
-                <div x-show="currentStep === 1" class="space-y-4">
-                    <button @click="selectType('good')" class="w-full p-6 rounded-2xl border-2 hover:border-blue-500 bg-white shadow-sm flex items-center justify-between group transition-all hover:bg-blue-50">
+                <div x-show="currentStep === 1" class="space-y-4 animate-fade-in">
+                    <h2 class="text-xl font-bold text-center text-slate-700 mb-2">เริ่มการจองคิว</h2>
+                    
+                    <button @click="selectType('good')" class="w-full p-6 rounded-2xl border-2 hover:border-blue-500 bg-white shadow-sm flex items-center justify-between transition-all hover:bg-blue-50">
                         <div class="text-left">
-                            <div class="text-lg font-bold text-slate-700 group-hover:text-blue-700">น้ำดี (ประปา)</div>
-                            <div class="text-sm text-gray-400">ส่งได้ จันทร์ - พุธ</div>
+                            <div class="text-lg font-bold text-blue-700">น้ำดี (ประปา)</div>
+                            <div class="text-xs text-gray-500">จันทร์ - พุธ</div>
                         </div>
-                        <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
-                            💧
-                        </div>
+                        <div class="text-3xl">💧</div>
                     </button>
-                    <button @click="selectType('waste')" class="w-full p-6 rounded-2xl border-2 hover:border-red-500 bg-white shadow-sm flex items-center justify-between group transition-all hover:bg-red-50">
+                    
+                    <button @click="selectType('waste')" class="w-full p-6 rounded-2xl border-2 hover:border-red-500 bg-white shadow-sm flex items-center justify-between transition-all hover:bg-red-50">
                         <div class="text-left">
-                            <div class="text-lg font-bold text-slate-700 group-hover:text-red-700">น้ำเสีย</div>
-                            <div class="text-sm text-gray-400">ส่งได้ อังคาร - พฤหัสบดี (บ่ม 5 วัน)</div>
+                            <div class="text-lg font-bold text-red-700">น้ำเสีย</div>
+                            <div class="text-xs text-gray-500">อังคาร - พฤหัส (บ่ม 5 วัน)</div>
                         </div>
-                        <div class="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center text-red-600">
-                            🧪
-                        </div>
+                        <div class="text-3xl">🧪</div>
                     </button>
                 </div>
 
-                <!-- Step 2: เลือกวันที่ -->
-                <div x-show="currentStep === 2" class="space-y-4">
-                    <div class="bg-white p-6 rounded-2xl border shadow-sm">
-                        <label class="block text-sm font-bold text-slate-500 mb-2 text-center">เลือกวันที่ต้องการส่ง</label>
-                        <input type="date" x-model="form.date" @change="checkDate()" class="w-full p-3 text-center text-xl font-bold bg-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        
-                        <div x-show="errorMsg" class="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm font-bold flex items-center">
-                            <span class="mr-2">❌</span> <span x-text="errorMsg"></span>
+                <!-- Step 2: เลือกวันที่ (ปฏิทิน) -->
+                <div x-show="currentStep === 2" class="space-y-4 animate-fade-in">
+                    <div class="flex items-center justify-between">
+                        <button @click="prevStep()" class="text-sm text-gray-500 flex items-center"><svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg> ย้อนกลับ</button>
+                        <h3 class="font-bold text-slate-700" x-text="form.type==='good'?'จองคิวน้ำดี':'จองคิวน้ำเสีย'"></h3>
+                    </div>
+
+                    <!-- Calendar Component -->
+                    <div class="bg-white rounded-2xl shadow-sm border p-4">
+                        <!-- Cal Header -->
+                        <div class="flex justify-between items-center mb-4">
+                            <button @click="changeMonth(-1)" class="p-2 hover:bg-gray-100 rounded-full text-gray-600"><</button>
+                            <div class="font-bold text-lg text-slate-800" x-text="getMonthName(calDate)"></div>
+                            <button @click="changeMonth(1)" class="p-2 hover:bg-gray-100 rounded-full text-gray-600">></button>
                         </div>
-                        <div x-show="!errorMsg && form.date" class="mt-4 p-3 bg-green-50 text-green-600 rounded-lg text-sm font-bold flex items-center">
-                            <span class="mr-2">✅</span> <span>วันว่าง! สามารถจองได้</span>
+                        
+                        <!-- Weekdays -->
+                        <div class="grid grid-cols-7 mb-2 text-center">
+                            <div class="text-xs text-red-500 font-bold">อา</div>
+                            <div class="text-xs text-gray-500">จ</div>
+                            <div class="text-xs text-gray-500">อ</div>
+                            <div class="text-xs text-gray-500">พ</div>
+                            <div class="text-xs text-gray-500">พฤ</div>
+                            <div class="text-xs text-gray-500">ศ</div>
+                            <div class="text-xs text-red-500 font-bold">ส</div>
+                        </div>
+
+                        <!-- Days -->
+                        <div class="grid grid-cols-7 gap-1">
+                            <template x-for="d in calendarDays">
+                                <div>
+                                    <template x-if="d.blank">
+                                        <div class="h-10"></div>
+                                    </template>
+                                    <template x-if="!d.blank">
+                                        <button @click="selectDate(d)" 
+                                            class="w-full h-12 rounded-lg flex flex-col items-center justify-center text-xs relative transition-all border border-transparent"
+                                            :class="{
+                                                'bg-gray-50 text-gray-300 cursor-not-allowed': d.status === 'unavailable',
+                                                'bg-green-50 text-green-700 hover:bg-green-100 hover:border-green-300 font-bold': d.status === 'available' && !d.selected,
+                                                'bg-blue-600 text-white shadow-md transform scale-105 z-10': d.selected
+                                            }">
+                                            <span x-text="d.day" class="text-sm"></span>
+                                            <!-- Status Dot/Text -->
+                                            <span x-show="d.status==='unavailable'" class="text-[8px] leading-tight px-1 truncate w-full" x-text="d.reason"></span>
+                                            <span x-show="d.status==='available' && !d.selected" class="text-[8px] text-green-600">ว่าง</span>
+                                            <span x-show="d.selected" class="text-[8px] text-white">เลือก</span>
+                                        </button>
+                                    </template>
+                                </div>
+                            </template>
                         </div>
                     </div>
-                    <button x-show="!errorMsg && form.date" @click="submit()" :disabled="loading" class="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold shadow-lg transform active:scale-95 transition-all">
-                        <span x-show="!loading">ยืนยันการจอง</span>
-                        <span x-show="loading">กำลังบันทึก...</span>
-                    </button>
+
+                    <!-- Confirm Area -->
+                    <div x-show="form.date" class="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center">
+                        <div class="text-sm text-blue-800 mb-1">วันที่เลือก</div>
+                        <div class="text-xl font-bold text-blue-900" x-text="formatDate(form.date)"></div>
+                        <button @click="submit()" :disabled="loading" class="w-full mt-3 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg">
+                            <span x-show="!loading">ยืนยันการจอง</span>
+                            <span x-show="loading">กำลังบันทึก...</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </template>
 
-        <!-- 3. STAFF PANEL -->
+        <!-- 2. HISTORY TAB -->
+        <template x-if="user && currentTab === 'history'">
+            <div class="h-full flex flex-col space-y-4">
+                <h2 class="text-xl font-bold text-center text-slate-700">ติดตามผลการตรวจ</h2>
+                
+                <div class="flex-1 overflow-y-auto space-y-3">
+                    <template x-for="book in userBookings" :key="book.id">
+                        <div class="bg-white p-4 rounded-xl border shadow-sm relative overflow-hidden">
+                            <div class="flex justify-between items-start mb-2">
+                                <div>
+                                    <div class="text-xs text-gray-500">วันที่ส่งตัวอย่าง</div>
+                                    <div class="font-bold text-slate-800" x-text="formatDate(book.date)"></div>
+                                </div>
+                                <span class="text-[10px] px-2 py-1 rounded-full border" 
+                                      :class="getStatusColor(book.status)" 
+                                      x-text="book.status"></span>
+                            </div>
+                            <div class="flex items-center text-xs text-gray-500 space-x-2">
+                                <span x-text="book.type==='good'?'💧 น้ำดี':'🧪 น้ำเสีย'"></span>
+                                <span>•</span>
+                                <span x-text="book.wing"></span>
+                            </div>
+                            <!-- ส่วนแสดงผลการตรวจ (ถ้ามี) -->
+                            <template x-if="book.resultLink">
+                                <a :href="book.resultLink" target="_blank" class="mt-3 block text-center w-full py-2 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100">
+                                    📄 ดาวน์โหลดรายงานผล
+                                </a>
+                            </template>
+                        </div>
+                    </template>
+                    
+                    <div x-show="userBookings.length === 0" class="text-center py-10 text-gray-400">
+                        <div class="text-4xl mb-2">📭</div>
+                        ยังไม่มีประวัติการส่งตัวอย่าง
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <!-- 3. STAFF TAB (Visible to all for demo, usually restricts) -->
         <template x-if="user && currentTab === 'staff_panel'">
             <div class="space-y-4">
+                <h2 class="text-xl font-bold text-center text-slate-700">จัดการระบบ (จนท.)</h2>
+                
                 <div class="bg-yellow-50 p-4 rounded-xl border border-yellow-200">
-                    <h3 class="font-bold text-yellow-800 mb-2">เพิ่มวันหยุด / วันออกตรวจ</h3>
-                    <div class="flex flex-col space-y-2">
-                        <input type="date" x-model="newHoliday.date" class="p-2 rounded border">
-                        <input type="text" x-model="newHoliday.name" placeholder="ชื่อวันหยุด (เช่น ออกตรวจ)" class="p-2 rounded border">
-                        <button @click="addHoliday()" class="bg-yellow-600 text-white py-2 rounded font-bold hover:bg-yellow-700">บันทึก</button>
+                    <h3 class="font-bold text-yellow-800 mb-2 text-sm">ปิดรับจอง (วันหยุด/ออกตรวจ)</h3>
+                    <div class="flex space-x-2">
+                        <input type="date" x-model="newHoliday.date" class="p-2 rounded border w-1/3 text-sm">
+                        <input type="text" x-model="newHoliday.name" placeholder="สาเหตุ" class="p-2 rounded border flex-1 text-sm">
+                        <button @click="addHoliday()" class="bg-yellow-600 text-white px-3 rounded font-bold hover:bg-yellow-700 text-sm">+</button>
                     </div>
                 </div>
 
                 <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-                    <div class="bg-slate-100 p-3 font-bold text-slate-600">รายการวันหยุดในระบบ</div>
+                    <div class="bg-slate-100 p-2 text-xs font-bold text-slate-600 px-4">วันหยุดในระบบ</div>
                     <div class="divide-y max-h-64 overflow-y-auto">
                         <template x-for="h in holidaysArray">
-                            <div class="p-3 flex justify-between items-center hover:bg-slate-50">
+                            <div class="p-3 flex justify-between items-center text-sm">
                                 <div>
-                                    <div class="font-bold text-slate-800" x-text="h.date"></div>
-                                    <div class="text-sm text-slate-500" x-text="h.name"></div>
+                                    <div class="font-bold text-slate-800" x-text="formatDate(h.date)"></div>
+                                    <div class="text-xs text-slate-500" x-text="h.name"></div>
                                 </div>
-                                <button @click="deleteHoliday(h.date)" class="text-red-500 text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50">ลบ</button>
+                                <button @click="deleteHoliday(h.date)" class="text-red-500">ลบ</button>
                             </div>
                         </template>
-                        <div x-show="holidaysArray.length === 0" class="p-4 text-center text-gray-400 text-sm">ยังไม่มีข้อมูลวันหยุด</div>
                     </div>
                 </div>
             </div>
         </template>
-
     </main>
 
-    <!-- Footer -->
-    <footer class="p-3 bg-white border-t border-slate-100 z-20 shrink-0">
-        <div x-show="user && currentTab === 'booking' && currentStep > 1" class="mb-2">
-            <button @click="prevStep()" class="w-full py-2 bg-slate-100 text-slate-600 rounded-lg font-bold flex items-center justify-center space-x-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+    <!-- TAB BAR NAVIGATION (Bottom) -->
+    <nav x-show="user" class="bg-white border-t border-slate-200 fixed bottom-0 w-full max-w-md pb-safe">
+        <div class="flex justify-around items-center h-16">
+            <button @click="currentTab = 'booking'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+                :class="currentTab === 'booking' ? 'text-blue-600' : 'text-gray-400'">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                <span>ย้อนกลับ</span>
+                <span class="text-[10px] font-bold">จองคิว</span>
+            </button>
+            
+            <button @click="currentTab = 'history'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+                :class="currentTab === 'history' ? 'text-blue-600' : 'text-gray-400'">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                <span class="text-[10px] font-bold">ติดตามผล</span>
+            </button>
+
+            <template x-if="userRole === 'admin' || userRole === 'staff'">
+                <button @click="currentTab = 'staff_panel'" class="flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors"
+                    :class="currentTab === 'staff_panel' ? 'text-yellow-600' : 'text-gray-400'">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span class="text-[10px] font-bold">จนท.</span>
+                </button>
+            </template>
+
+            <button @click="handleLogout()" class="flex flex-col items-center justify-center w-full h-full space-y-1 text-red-400 hover:text-red-600">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                <span class="text-[10px] font-bold">ออก</span>
             </button>
         </div>
-        <div class="text-center">
-            <p class="text-[10px] text-slate-400 font-light">จัดทำโดย ผสภ.กวป.พอ.</p>
-        </div>
-    </footer>
+    </nav>
 
 </body>
 </html>
